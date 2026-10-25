@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍌</text></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Monkey Island Survivability</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+      <div id="hud">
+        <div id="hud-top">
+          <div id="banana-pill" aria-live="polite">
+            <span class="banana-icon" aria-hidden="true">🍌</span>
+            <span id="banana-count">0</span>
+          </div>
+          <div id="status-pills"></div>
+        </div>
+        <div id="toast" class="hidden" role="status"></div>
+        <div id="controls-hint">
+          WASD move · Space jump · Mouse look · E shop (near vendor) · Click to capture mouse
+        </div>
+        <div id="near-hint" class="hidden"></div>
+      </div>
+      <div id="shop-overlay" class="hidden" aria-hidden="true">
+        <div id="shop-panel" role="dialog" aria-labelledby="shop-title">
+          <header>
+            <div>
+              <p class="shop-eyebrow">Beach Bazaar</p>
+              <h2 id="shop-title">Coco's Supply Stand</h2>
+            </div>
+            <button type="button" id="shop-close" aria-label="Close shop">✕</button>
+          </header>
+          <p id="shop-balance">Bananas: <strong>0</strong></p>
+          <p id="shop-message" class="shop-message"></p>
+          <div id="shop-grid"></div>
+          <p class="shop-footer">Press <kbd>E</kbd> or ✕ to close · Spend bananas wisely, sailor.</p>
+        </div>
+      </div>
+      <div id="start-screen">
+        <div class="start-card">
+          <p class="brand">Monkey Island Survivability</p>
+          <h1>Survive the tropics. Spend the bananas.</h1>
+          <p class="lede">
+            Explore a sunlit island, collect bananas, and bargain with Coco the vendor for swimming,
+            a raft, and access to the sealed North Cove.
+          </p>
+          <button type="button" id="start-btn">Enter Island</button>
+          <p class="start-hint">Click the game, then use WASD · Space · E</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
