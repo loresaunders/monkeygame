@@ -207,21 +207,32 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   vendorStand.rotation.y = 0.6
   group.add(vendorStand)
 
-  // Bananas
+  // Bananas — starter cluster near spawn, trail toward vendor, cove stash
   const bananaPositions: THREE.Vector3[] = []
-  for (let i = 0; i < 36; i++) {
-    const a = rand() * Math.PI * 2
-    const r = 5 + rand() * (ISLAND_RADIUS * 0.78)
-    let x = Math.cos(a) * r
-    let z = Math.sin(a) * r
-    // Extra bananas in north cove zone (behind gate)
-    if (i < 8) {
-      x = (rand() - 0.5) * 10
-      z = GATE_Z + 4 + rand() * 10
-    }
+  const pushBanana = (x: number, z: number) => {
     const y = groundHeight(x, z)
-    if (y < WATER_LEVEL + 0.25) continue
+    if (y < WATER_LEVEL + 0.25) return
     bananaPositions.push(new THREE.Vector3(x, y + 0.35, z))
+  }
+  const starters: [number, number][] = [
+    [2, -10],
+    [-2, -9],
+    [3, -8],
+    [-1, -7],
+    [4, -11],
+    [-4, -10],
+    [-7, -7],
+    [-9, -5],
+    [-8, -4],
+  ]
+  for (const [x, z] of starters) pushBanana(x, z)
+  for (let i = 0; i < 8; i++) {
+    pushBanana((rand() - 0.5) * 10, GATE_Z + 4 + rand() * 10)
+  }
+  for (let i = 0; i < 24; i++) {
+    const a = rand() * Math.PI * 2
+    const r = 6 + rand() * (ISLAND_RADIUS * 0.75)
+    pushBanana(Math.cos(a) * r, Math.sin(a) * r)
   }
 
   const fauna = new THREE.Group()
