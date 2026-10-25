@@ -6,6 +6,7 @@ if (!canvas) throw new Error('Missing #game-canvas')
 
 const game = new Game(canvas)
 game.start()
+;(window as unknown as { __monkeyGame?: Game }).__monkeyGame = game
 
 document.getElementById('start-btn')?.addEventListener('click', () => {
   game.beginPlay()

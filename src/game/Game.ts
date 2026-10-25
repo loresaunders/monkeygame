@@ -101,6 +101,30 @@ export class Game {
     this.toast('Welcome to Monkey Island — find bananas!', true)
   }
 
+  /** Debug / QA helpers */
+  debugTeleportToVendor() {
+    this.playerPos.set(
+      this.world.vendorAnchor.x + 1.5,
+      this.world.vendorAnchor.y,
+      this.world.vendorAnchor.z + 1.5,
+    )
+    this.playerPos.y = groundHeight(this.playerPos.x, this.playerPos.z)
+    this.player.position.copy(this.playerPos)
+    this.nearVendor = true
+    this.updateVendorProximity()
+  }
+
+  debugOpenShop() {
+    this.debugTeleportToVendor()
+    this.setShopOpen(true)
+  }
+
+  debugAddBananas(n: number) {
+    this.bananas += n
+    this.updateHUD()
+    this.renderShop()
+  }
+
   dispose() {
     cancelAnimationFrame(this.animId)
     this.input.detach()
