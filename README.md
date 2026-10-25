@@ -1,6 +1,6 @@
 # Monkey Island Survivability
 
-A third-person 3D browser game: play a sunglass-wearing monkey exploring a tropical island, collecting bananas, and shopping at Coco’s beach stand for swimming, a raft, consumables, and access to the gated North Cove.
+A third-person 3D browser game: play a sunglass-wearing monkey exploring a large tropical jungle island (sandy shores → dense inland canopy), collecting bananas, and shopping at Coco’s beach stand for swimming, a raft, consumables, and access to the gated North Cove.
 
 Built with **Vite**, **TypeScript**, and **Three.js**.
 

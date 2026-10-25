@@ -1,5 +1,13 @@
 import * as THREE from 'three'
-import { biomeAt, groundHeight, GATE_Z, ISLAND_RADIUS, WATER_LEVEL } from './terrain'
+import {
+  biomeAt,
+  groundHeight,
+  GATE_Z,
+  ISLAND_RADIUS,
+  JUNGLE_RADIUS,
+  WATER_LEVEL,
+  isClearing,
+} from './terrain'
 
 function mulberry32(seed: number) {
   return () => {
@@ -9,6 +17,11 @@ function mulberry32(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
+}
+
+export interface WorldOptions {
+  /** Fewer instances / cheaper mats for SwiftShader. */
+  softwareGl?: boolean
 }
 
 export interface WorldParts {
@@ -21,41 +34,49 @@ export interface WorldParts {
   fauna: THREE.Group
   bananaPositions: THREE.Vector3[]
   trees: THREE.Object3D[]
+  sunLight: THREE.DirectionalLight
 }
 
-export function createWorld(scene: THREE.Scene): WorldParts {
+const PALM_TRUNK_MAT = new THREE.MeshLambertMaterial({ color: 0x8a6a3d })
+const PALM_CANOPY_MAT = new THREE.MeshLambertMaterial({ color: 0x2f9a44, side: THREE.DoubleSide })
+const BUSH_MAT = new THREE.MeshLambertMaterial({ color: 0x2d7a38 })
+const BUSH_MAT_B = new THREE.MeshLambertMaterial({ color: 0x3a9144 })
+const ROCK_MAT = new THREE.MeshLambertMaterial({ color: 0x7d766c })
+
+export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldParts {
+  const software = !!opts.softwareGl
   const group = new THREE.Group()
   scene.add(group)
 
-  // Sky atmosphere
   scene.background = new THREE.Color(0x74c7e3)
-  scene.fog = new THREE.FogExp2(0x9ad4e8, 0.012)
+  // Lighter fog on the larger island so distant jungle still reads
+  scene.fog = new THREE.FogExp2(0x9ad4e8, software ? 0.008 : 0.0055)
 
   const hemi = new THREE.HemisphereLight(0xb1e4ff, 0x7a5a32, 0.85)
   scene.add(hemi)
 
   const sunLight = new THREE.DirectionalLight(0xfff1c9, 1.55)
-  sunLight.position.set(40, 55, 18)
-  sunLight.castShadow = true
-  // 1024 is enough for this island scale; 2048 doubled shadow-pass fill cost
+  sunLight.position.set(90, 110, 40)
+  sunLight.castShadow = !software
   sunLight.shadow.mapSize.set(1024, 1024)
-  sunLight.shadow.camera.near = 1
-  sunLight.shadow.camera.far = 120
-  sunLight.shadow.camera.left = -48
-  sunLight.shadow.camera.right = 48
-  sunLight.shadow.camera.top = 48
-  sunLight.shadow.camera.bottom = -48
+  sunLight.shadow.camera.near = 2
+  sunLight.shadow.camera.far = 320
+  const shadowExtent = ISLAND_RADIUS * 0.85
+  sunLight.shadow.camera.left = -shadowExtent
+  sunLight.shadow.camera.right = shadowExtent
+  sunLight.shadow.camera.top = shadowExtent
+  sunLight.shadow.camera.bottom = -shadowExtent
   sunLight.shadow.bias = -0.0008
   scene.add(sunLight)
 
   const sun = new THREE.Mesh(
-    new THREE.SphereGeometry(6.5, 24, 24),
+    new THREE.SphereGeometry(8, 20, 20),
     new THREE.MeshBasicMaterial({ color: 0xfff0a0 }),
   )
-  sun.position.set(70, 48, 35)
+  sun.position.set(120, 70, 55)
   scene.add(sun)
   const sunGlow = new THREE.Mesh(
-    new THREE.SphereGeometry(11, 24, 24),
+    new THREE.SphereGeometry(14, 16, 16),
     new THREE.MeshBasicMaterial({
       color: 0xffcc55,
       transparent: true,
@@ -66,21 +87,21 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   sunGlow.position.copy(sun.position)
   scene.add(sunGlow)
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.22)
-  scene.add(ambient)
+  scene.add(new THREE.AmbientLight(0xffffff, 0.22))
 
-  // Island terrain mesh
-  const seg = 96
-  const size = ISLAND_RADIUS * 2.2
+  // Island terrain
+  const seg = software ? 72 : 128
+  const size = ISLAND_RADIUS * 2.15
   const geo = new THREE.PlaneGeometry(size, size, seg, seg)
   geo.rotateX(-Math.PI / 2)
   const pos = geo.attributes.position
   const colors: number[] = []
-  const sand = new THREE.Color(0xe8c98a)
-  const grass = new THREE.Color(0x3f9a4a)
-  const grassDeep = new THREE.Color(0x2d6e36)
+  const sand = new THREE.Color(0xedcfa0)
+  const wetSand = new THREE.Color(0xd4b078)
+  const grass = new THREE.Color(0x4aa84f)
+  const jungle = new THREE.Color(0x1f6b32)
+  const jungleDeep = new THREE.Color(0x145226)
   const rock = new THREE.Color(0x7a7368)
-  const wetSand = new THREE.Color(0xd2b074)
   const c = new THREE.Color()
 
   for (let i = 0; i < pos.count; i++) {
@@ -89,10 +110,11 @@ export function createWorld(scene: THREE.Scene): WorldParts {
     const y = groundHeight(x, z)
     pos.setY(i, y)
     const biome = biomeAt(x, z)
-    if (y < WATER_LEVEL + 0.25) c.copy(wetSand)
+    if (y < WATER_LEVEL + 0.28) c.copy(wetSand)
     else if (biome === 'sand') c.copy(sand)
     else if (biome === 'rock') c.copy(rock)
-    else c.copy(grass).lerp(grassDeep, Math.min(1, (y - 1) / 4))
+    else if (biome === 'jungle') c.copy(jungle).lerp(jungleDeep, Math.min(1, (y - 0.8) / 5))
+    else c.copy(grass).lerp(jungle, 0.35)
     colors.push(c.r, c.g, c.b)
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
@@ -100,19 +122,15 @@ export function createWorld(scene: THREE.Scene): WorldParts {
 
   const island = new THREE.Mesh(
     geo,
-    new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.92,
-      metalness: 0.02,
-      flatShading: false,
-    }),
+    new THREE.MeshLambertMaterial({ vertexColors: true }),
   )
-  island.receiveShadow = true
-  island.castShadow = false // huge terrain shadow cast is expensive for little gain
+  island.receiveShadow = !software
+  island.castShadow = false
   group.add(island)
 
-  // Ocean — GPU vertex waves (no per-frame CPU attribute uploads / normals)
-  const oceanGeo = new THREE.PlaneGeometry(900, 900, 32, 32)
+  // Ocean
+  const oceanSeg = software ? 1 : 40
+  const oceanGeo = new THREE.PlaneGeometry(1400, 1400, oceanSeg, oceanSeg)
   oceanGeo.rotateX(-Math.PI / 2)
   const oceanMat = new THREE.MeshStandardMaterial({
     color: 0x1a8fb0,
@@ -121,31 +139,32 @@ export function createWorld(scene: THREE.Scene): WorldParts {
     transparent: true,
     opacity: 0.92,
   })
-  oceanMat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = { value: 0 }
-    shader.vertexShader = `uniform float uTime;\n` + shader.vertexShader
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-       transformed.y += sin(position.x * 0.08 + uTime * 1.4) * 0.12
-                      + cos(position.z * 0.07 + uTime * 1.1) * 0.10;`,
-    )
-    oceanMat.userData.shader = shader
+  if (!software) {
+    oceanMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = { value: 0 }
+      shader.vertexShader = `uniform float uTime;\n` + shader.vertexShader
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         transformed.y += sin(position.x * 0.06 + uTime * 1.4) * 0.14
+                        + cos(position.z * 0.05 + uTime * 1.1) * 0.11;`,
+      )
+      oceanMat.userData.shader = shader
+    }
+    oceanMat.customProgramCacheKey = () => 'monkey-ocean-waves-v2'
   }
-  oceanMat.customProgramCacheKey = () => 'monkey-ocean-waves-v1'
   const ocean = new THREE.Mesh(oceanGeo, oceanMat)
   ocean.position.y = WATER_LEVEL
   ocean.receiveShadow = false
   group.add(ocean)
 
-  // Distant horizon ring (no other land)
   const horizon = new THREE.Mesh(
-    new THREE.RingGeometry(220, 420, 64),
+    new THREE.RingGeometry(400, 700, 48),
     new THREE.MeshBasicMaterial({
       color: 0x5eb4d2,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.32,
     }),
   )
   horizon.rotation.x = -Math.PI / 2
@@ -155,112 +174,62 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   const rand = mulberry32(42)
   const trees: THREE.Object3D[] = []
 
-  // Coconut palms & bushes & rocks
-  for (let i = 0; i < 28; i++) {
-    const a = rand() * Math.PI * 2
-    const r = 8 + rand() * (ISLAND_RADIUS * 0.7)
-    const x = Math.cos(a) * r
-    const z = Math.sin(a) * r
-    const y = groundHeight(x, z)
-    if (y < WATER_LEVEL + 0.35) continue
-    if (z > GATE_Z - 1 && Math.abs(x) < 8) continue
-    const tree = makePalm(rand)
-    tree.position.set(x, y, z)
-    tree.rotation.y = rand() * Math.PI * 2
-    group.add(tree)
-    trees.push(tree)
-  }
+  // --- Instanced jungle (few draw calls, high density) ---
+  const palmCount = software ? 48 : 160
+  const bushCount = software ? 60 : 220
+  const rockCount = software ? 16 : 36
+  placeInstancedPalms(group, rand, palmCount, software)
+  placeInstancedBushes(group, rand, bushCount)
+  placeInstancedRocks(group, rand, rockCount)
 
-  for (let i = 0; i < 28; i++) {
-    const x = (rand() - 0.5) * ISLAND_RADIUS * 1.5
-    const z = (rand() - 0.5) * ISLAND_RADIUS * 1.5
-    const y = groundHeight(x, z)
-    if (y < WATER_LEVEL + 0.3) continue
-    const bush = makeBush(rand)
-    bush.position.set(x, y, z)
-    group.add(bush)
-  }
-
-  for (let i = 0; i < 14; i++) {
-    const x = (rand() - 0.5) * ISLAND_RADIUS * 1.6
-    const z = (rand() - 0.5) * ISLAND_RADIUS * 1.6
-    const y = groundHeight(x, z)
-    if (y < WATER_LEVEL + 0.2) continue
-    const rockMesh = makeRock(rand)
-    rockMesh.position.set(x, y, z)
-    group.add(rockMesh)
-  }
-
-  // Gate / North Cove barrier
-  const gate = new THREE.Group()
-  gate.position.set(0, 0, GATE_Z)
-  const postMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.85 })
-  for (const sx of [-4.2, 4.2]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.45, 3.2, 0.45), postMat)
-    post.position.set(sx, 1.6, 0)
-    post.castShadow = true
-    gate.add(post)
-  }
-  const bar = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.35, 0.25), postMat)
-  bar.position.set(0, 2.4, 0)
-  gate.add(bar)
-  const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(2.4, 1.1, 0.12),
-    new THREE.MeshStandardMaterial({ color: 0xd7b26a }),
-  )
-  sign.position.set(0, 1.5, 0.2)
-  gate.add(sign)
-  const rope = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.06, 8.2, 8),
-    new THREE.MeshStandardMaterial({ color: 0xc4a35a }),
-  )
-  rope.rotation.z = Math.PI / 2
-  rope.position.set(0, 1.1, 0)
-  rope.name = 'gateRope'
-  gate.add(rope)
-  // Place gate on terrain
-  gate.position.y = groundHeight(0, GATE_Z)
+  // Gate / North Cove
+  const gate = buildGate()
+  gate.position.set(0, groundHeight(0, GATE_Z), GATE_Z)
   group.add(gate)
 
-  // Vendor stand
+  // Vendor on the SW beach — easy to spot from south spawn
   const vendorStand = createVendorStand()
-  const vx = -10
-  const vz = -6
+  const vx = -32
+  const vz = -48
   vendorStand.position.set(vx, groundHeight(vx, vz), vz)
-  vendorStand.rotation.y = 0.6
+  vendorStand.rotation.y = 0.55
   group.add(vendorStand)
 
-  // Bananas — starter cluster near spawn, trail toward vendor, cove stash
+  // Bananas
   const bananaPositions: THREE.Vector3[] = []
   const pushBanana = (x: number, z: number) => {
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.25) return
     bananaPositions.push(new THREE.Vector3(x, y + 0.35, z))
   }
+  // Starters near south spawn + trail to vendor
   const starters: [number, number][] = [
-    [2, -10],
-    [-2, -9],
-    [3, -8],
-    [-1, -7],
-    [4, -11],
-    [-4, -10],
-    [-7, -7],
-    [-9, -5],
-    [-8, -4],
+    [3, -68],
+    [-3, -66],
+    [5, -64],
+    [-2, -62],
+    [0, -60],
+    [-12, -56],
+    [-20, -52],
+    [-28, -50],
+    [-30, -46],
   ]
   for (const [x, z] of starters) pushBanana(x, z)
-  for (let i = 0; i < 8; i++) {
-    pushBanana((rand() - 0.5) * 10, GATE_Z + 4 + rand() * 10)
+  // Cove stash
+  for (let i = 0; i < 14; i++) {
+    pushBanana((rand() - 0.5) * 22, GATE_Z + 8 + rand() * 22)
   }
-  for (let i = 0; i < 24; i++) {
+  // Scattered inland / beach
+  const scatterN = software ? 40 : 90
+  for (let i = 0; i < scatterN; i++) {
     const a = rand() * Math.PI * 2
-    const r = 6 + rand() * (ISLAND_RADIUS * 0.75)
+    const r = 12 + rand() * (ISLAND_RADIUS * 0.78)
     pushBanana(Math.cos(a) * r, Math.sin(a) * r)
   }
 
   const fauna = new THREE.Group()
   group.add(fauna)
-  spawnFauna(fauna, rand)
+  spawnFauna(fauna, rand, software)
 
   return {
     group,
@@ -272,76 +241,228 @@ export function createWorld(scene: THREE.Scene): WorldParts {
     fauna,
     bananaPositions,
     trees,
+    sunLight,
   }
 }
 
-const PALM_TRUNK_MAT = new THREE.MeshLambertMaterial({ color: 0x8a6a3d })
-const PALM_LEAF_MAT = new THREE.MeshLambertMaterial({ color: 0x2f9a44, side: THREE.DoubleSide })
-const PALM_COCO_MAT = new THREE.MeshLambertMaterial({ color: 0x5a3a1e })
-const ROCK_MAT = new THREE.MeshLambertMaterial({ color: 0x7d766c })
+function placeInstancedPalms(
+  group: THREE.Group,
+  rand: () => number,
+  count: number,
+  software: boolean,
+) {
+  const trunkGeo = new THREE.CylinderGeometry(0.12, 0.26, 1, software ? 5 : 7)
+  trunkGeo.translate(0, 0.5, 0)
+  const canopyGeo = buildCanopyGeometry(software)
 
-function makePalm(rand: () => number) {
-  const g = new THREE.Group()
-  const trunkH = 4.4 + rand() * 1.2
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.11, 0.24, trunkH, 8),
-    PALM_TRUNK_MAT,
-  )
-  trunk.position.y = trunkH / 2
-  trunk.rotation.z = (rand() - 0.5) * 0.18
-  trunk.castShadow = true
-  g.add(trunk)
+  const trunks = new THREE.InstancedMesh(trunkGeo, PALM_TRUNK_MAT, count)
+  const canopies = new THREE.InstancedMesh(canopyGeo, PALM_CANOPY_MAT, count)
+  trunks.castShadow = !software
+  trunks.receiveShadow = false
+  canopies.castShadow = false
+  canopies.receiveShadow = false
+  trunks.frustumCulled = true
+  canopies.frustumCulled = true
 
-  const topY = trunkH - 0.15
-  for (let i = 0; i < 5; i++) {
-    const frond = new THREE.Group()
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.7, 5, 1, true), PALM_LEAF_MAT)
-    leaf.rotation.x = Math.PI / 2
-    leaf.position.z = 0.75
-    leaf.castShadow = false
-    frond.add(leaf)
-    frond.position.y = topY
-    frond.rotation.order = 'YXZ'
-    frond.rotation.y = (i / 5) * Math.PI * 2 + rand() * 0.2
-    frond.rotation.x = 0.35 + rand() * 0.2
-    g.add(frond)
+  const dummy = new THREE.Object3D()
+  let placed = 0
+  let attempts = 0
+  while (placed < count && attempts < count * 12) {
+    attempts++
+    const a = rand() * Math.PI * 2
+    // Prefer inland jungle; keep beach mostly clear
+    const preferJungle = rand() < 0.82
+    const rMin = preferJungle ? 10 : JUNGLE_RADIUS
+    const rMax = preferJungle ? JUNGLE_RADIUS : ISLAND_RADIUS * 0.78
+    const r = rMin + rand() * Math.max(2, rMax - rMin)
+    const x = Math.cos(a) * r
+    const z = Math.sin(a) * r
+    if (isClearing(x, z) && preferJungle && rand() < 0.85) continue
+    if (z > GATE_Z - 2 && Math.abs(x) < 10) continue
+    const y = groundHeight(x, z)
+    if (y < WATER_LEVEL + 0.45) continue
+    if (biomeAt(x, z) === 'sand' && preferJungle) continue
+
+    const h = 4.2 + rand() * 2.4
+    const lean = (rand() - 0.5) * 0.18
+    const yaw = rand() * Math.PI * 2
+
+    dummy.position.set(x, y, z)
+    dummy.rotation.set(lean, yaw, 0)
+    dummy.scale.set(1, h, 1)
+    dummy.updateMatrix()
+    trunks.setMatrixAt(placed, dummy.matrix)
+
+    dummy.position.set(x, y + h * 0.92, z)
+    dummy.rotation.set(0, yaw, lean * 0.5)
+    const cs = 0.85 + rand() * 0.45
+    dummy.scale.set(cs, cs, cs)
+    dummy.updateMatrix()
+    canopies.setMatrixAt(placed, dummy.matrix)
+    placed++
   }
-  for (let i = 0; i < 3; i++) {
-    const coco = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), PALM_COCO_MAT)
-    const ang = (i / 3) * Math.PI * 2
-    coco.position.set(Math.cos(ang) * 0.22, topY - 0.4, Math.sin(ang) * 0.22)
-    g.add(coco)
-  }
-  return g
+  trunks.count = placed
+  canopies.count = placed
+  trunks.instanceMatrix.needsUpdate = true
+  canopies.instanceMatrix.needsUpdate = true
+  group.add(trunks, canopies)
 }
 
-function makeBush(rand: () => number) {
-  const g = new THREE.Group()
-  const mat = new THREE.MeshLambertMaterial({
-    color: new THREE.Color().setHSL(0.28 + rand() * 0.06, 0.55, 0.32 + rand() * 0.1),
-  })
-  for (let i = 0; i < 2; i++) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.35 + rand() * 0.25, 8, 6), mat)
-    s.position.set((rand() - 0.5) * 0.5, 0.3 + rand() * 0.2, (rand() - 0.5) * 0.5)
-    s.castShadow = false
-    g.add(s)
+function buildCanopyGeometry(software: boolean): THREE.BufferGeometry {
+  // Merge a few fronds into one geo so each palm is 1 canopy instance
+  const parts: THREE.BufferGeometry[] = []
+  const fronds = software ? 4 : 5
+  for (let i = 0; i < fronds; i++) {
+    const cone = new THREE.ConeGeometry(0.38, 1.9, software ? 4 : 5, 1, true)
+    cone.rotateX(Math.PI / 2)
+    cone.translate(0, 0, 0.85)
+    const m = new THREE.Matrix4()
+    const q = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(0.4, (i / fronds) * Math.PI * 2, 0, 'YXZ'),
+    )
+    m.makeRotationFromQuaternion(q)
+    cone.applyMatrix4(m)
+    parts.push(cone)
   }
-  return g
+  const merged = mergeGeos(parts)
+  for (const p of parts) p.dispose()
+  return merged
 }
 
-function makeRock(rand: () => number) {
-  const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.35 + rand() * 0.55, 0), ROCK_MAT)
-  mesh.scale.set(1 + rand(), 0.6 + rand() * 0.7, 1 + rand() * 0.4)
-  mesh.rotation.set(rand(), rand(), rand())
+function mergeGeos(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  // Minimal merge without addons dependency
+  let totalVerts = 0
+  for (const g of geos) {
+    totalVerts += g.attributes.position.count
+  }
+  const positions = new Float32Array(totalVerts * 3)
+  const normals = new Float32Array(totalVerts * 3)
+  const indices: number[] = []
+  let vOffset = 0
+  for (const g of geos) {
+    g.computeVertexNormals()
+    const p = g.attributes.position
+    const n = g.attributes.normal
+    for (let i = 0; i < p.count; i++) {
+      positions[(vOffset + i) * 3] = p.getX(i)
+      positions[(vOffset + i) * 3 + 1] = p.getY(i)
+      positions[(vOffset + i) * 3 + 2] = p.getZ(i)
+      normals[(vOffset + i) * 3] = n.getX(i)
+      normals[(vOffset + i) * 3 + 1] = n.getY(i)
+      normals[(vOffset + i) * 3 + 2] = n.getZ(i)
+    }
+    const idx = g.index
+    if (idx) {
+      for (let i = 0; i < idx.count; i++) indices.push(idx.getX(i) + vOffset)
+    } else {
+      for (let i = 0; i < p.count; i++) indices.push(vOffset + i)
+    }
+    vOffset += p.count
+  }
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  out.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  out.setIndex(indices)
+  return out
+}
+
+function placeInstancedBushes(group: THREE.Group, rand: () => number, count: number) {
+  const geo = new THREE.SphereGeometry(0.55, 6, 5)
+  const meshA = new THREE.InstancedMesh(geo, BUSH_MAT, count)
+  const meshB = new THREE.InstancedMesh(geo, BUSH_MAT_B, count)
+  meshA.castShadow = false
+  meshB.castShadow = false
+  const dummy = new THREE.Object3D()
+  let aN = 0
+  let bN = 0
+  let attempts = 0
+  while (aN + bN < count && attempts < count * 10) {
+    attempts++
+    const a = rand() * Math.PI * 2
+    const r = 8 + rand() * (ISLAND_RADIUS * 0.72)
+    const x = Math.cos(a) * r
+    const z = Math.sin(a) * r
+    if (isClearing(x, z) && rand() < 0.7) continue
+    const y = groundHeight(x, z)
+    if (y < WATER_LEVEL + 0.4) continue
+    if (biomeAt(x, z) === 'sand') continue
+    dummy.position.set(x, y + 0.35, z)
+    dummy.rotation.set(0, rand() * Math.PI * 2, 0)
+    const s = 0.7 + rand() * 1.1
+    dummy.scale.set(s * (0.9 + rand() * 0.3), s * (0.7 + rand() * 0.4), s * (0.9 + rand() * 0.3))
+    dummy.updateMatrix()
+    if (rand() < 0.5 && aN < count) {
+      meshA.setMatrixAt(aN++, dummy.matrix)
+    } else if (bN < count) {
+      meshB.setMatrixAt(bN++, dummy.matrix)
+    }
+  }
+  meshA.count = aN
+  meshB.count = bN
+  meshA.instanceMatrix.needsUpdate = true
+  meshB.instanceMatrix.needsUpdate = true
+  group.add(meshA, meshB)
+}
+
+function placeInstancedRocks(group: THREE.Group, rand: () => number, count: number) {
+  const geo = new THREE.DodecahedronGeometry(0.55, 0)
+  const mesh = new THREE.InstancedMesh(geo, ROCK_MAT, count)
   mesh.castShadow = false
   mesh.receiveShadow = true
-  return mesh
+  const dummy = new THREE.Object3D()
+  let placed = 0
+  let attempts = 0
+  while (placed < count && attempts < count * 8) {
+    attempts++
+    const x = (rand() - 0.5) * ISLAND_RADIUS * 1.7
+    const z = (rand() - 0.5) * ISLAND_RADIUS * 1.7
+    const y = groundHeight(x, z)
+    if (y < WATER_LEVEL + 0.25) continue
+    dummy.position.set(x, y, z)
+    dummy.rotation.set(rand(), rand(), rand())
+    dummy.scale.set(0.8 + rand(), 0.5 + rand() * 0.7, 0.8 + rand() * 0.5)
+    dummy.updateMatrix()
+    mesh.setMatrixAt(placed++, dummy.matrix)
+  }
+  mesh.count = placed
+  mesh.instanceMatrix.needsUpdate = true
+  group.add(mesh)
+}
+
+function buildGate() {
+  const gate = new THREE.Group()
+  const postMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2e })
+  const half = 7.5
+  for (const sx of [-half, half]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 3.6, 0.55), postMat)
+    post.position.set(sx, 1.8, 0)
+    post.castShadow = true
+    gate.add(post)
+  }
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(half * 2, 0.4, 0.28), postMat)
+  bar.position.set(0, 2.7, 0)
+  gate.add(bar)
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(2.8, 1.2, 0.12),
+    new THREE.MeshLambertMaterial({ color: 0xd7b26a }),
+  )
+  sign.position.set(0, 1.6, 0.22)
+  gate.add(sign)
+  const rope = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.07, half * 2, 8),
+    new THREE.MeshLambertMaterial({ color: 0xc4a35a }),
+  )
+  rope.rotation.z = Math.PI / 2
+  rope.position.set(0, 1.15, 0)
+  rope.name = 'gateRope'
+  gate.add(rope)
+  return gate
 }
 
 export function createVendorStand() {
   const g = new THREE.Group()
-  const wood = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.85 })
-  const cloth = new THREE.MeshStandardMaterial({ color: 0xe4572e, roughness: 0.7 })
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8b5a2b })
+  const cloth = new THREE.MeshLambertMaterial({ color: 0xe4572e })
 
   const counter = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 1.2), wood)
   counter.position.y = 0.55
@@ -360,47 +481,44 @@ export function createVendorStand() {
   awning.rotation.x = -0.15
   g.add(awning)
 
-  // Merchandise display
   const items: { color: number; pos: [number, number, number]; geo: THREE.BufferGeometry }[] = [
-    { color: 0xe63946, pos: [-0.8, 1.15, 0.15], geo: new THREE.CylinderGeometry(0.08, 0.1, 0.28, 10) },
-    { color: 0x457b9d, pos: [-0.5, 1.15, 0.2], geo: new THREE.CylinderGeometry(0.08, 0.1, 0.28, 10) },
-    { color: 0x2a9d8f, pos: [-0.2, 1.15, 0.12], geo: new THREE.CylinderGeometry(0.08, 0.1, 0.28, 10) },
-    { color: 0x6b3e1e, pos: [0.2, 1.12, 0.2], geo: new THREE.SphereGeometry(0.14, 10, 8) },
+    { color: 0xe63946, pos: [-0.8, 1.15, 0.15], geo: new THREE.CylinderGeometry(0.08, 0.1, 0.28, 8) },
+    { color: 0x457b9d, pos: [-0.5, 1.15, 0.2], geo: new THREE.CylinderGeometry(0.08, 0.1, 0.28, 8) },
+    { color: 0x2a9d8f, pos: [-0.2, 1.15, 0.12], geo: new THREE.CylinderGeometry(0.08, 0.1, 0.28, 8) },
+    { color: 0x6b3e1e, pos: [0.2, 1.12, 0.2], geo: new THREE.SphereGeometry(0.14, 8, 6) },
     { color: 0xd4a373, pos: [0.55, 1.12, 0.15], geo: new THREE.BoxGeometry(0.22, 0.12, 0.22) },
-    { color: 0x48cae4, pos: [0.9, 1.15, 0.18], geo: new THREE.CylinderGeometry(0.07, 0.09, 0.26, 10) },
-    { color: 0x0077b6, pos: [1.15, 1.18, 0.05], geo: new THREE.CylinderGeometry(0.1, 0.12, 0.32, 10) },
+    { color: 0x48cae4, pos: [0.9, 1.15, 0.18], geo: new THREE.CylinderGeometry(0.07, 0.09, 0.26, 8) },
+    { color: 0x0077b6, pos: [1.15, 1.18, 0.05], geo: new THREE.CylinderGeometry(0.1, 0.12, 0.32, 8) },
   ]
   for (const it of items) {
-    const m = new THREE.Mesh(it.geo, new THREE.MeshStandardMaterial({ color: it.color, roughness: 0.55 }))
+    const m = new THREE.Mesh(it.geo, new THREE.MeshLambertMaterial({ color: it.color }))
     m.position.set(...it.pos)
-    m.castShadow = true
+    m.castShadow = false
     g.add(m)
   }
 
-  // Vendor monkey NPC (simpler)
   const npc = createSimpleVendorNpc()
   npc.position.set(0.1, 0.9, -0.55)
   g.add(npc)
 
   const crate = new THREE.Mesh(
     new THREE.BoxGeometry(0.7, 0.5, 0.7),
-    new THREE.MeshStandardMaterial({ color: 0xa67c52 }),
+    new THREE.MeshLambertMaterial({ color: 0xa67c52 }),
   )
   crate.position.set(-1.4, 0.35, 0.5)
   g.add(crate)
 
-  // Tall shop banner so the stand is easy to spot
   const flagPole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.05, 0.05, 4.2, 8),
-    new THREE.MeshStandardMaterial({ color: 0x6b4a2e }),
+    new THREE.CylinderGeometry(0.05, 0.05, 5.2, 8),
+    new THREE.MeshLambertMaterial({ color: 0x6b4a2e }),
   )
-  flagPole.position.set(1.6, 2.1, 0.6)
+  flagPole.position.set(1.6, 2.6, 0.6)
   g.add(flagPole)
   const flag = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.4, 0.9),
-    new THREE.MeshStandardMaterial({ color: 0xf5c518, side: THREE.DoubleSide }),
+    new THREE.PlaneGeometry(1.6, 1.0),
+    new THREE.MeshLambertMaterial({ color: 0xf5c518, side: THREE.DoubleSide }),
   )
-  flag.position.set(2.25, 3.5, 0.6)
+  flag.position.set(2.35, 4.4, 0.6)
   g.add(flag)
 
   return g
@@ -408,87 +526,83 @@ export function createVendorStand() {
 
 function createSimpleVendorNpc() {
   const g = new THREE.Group()
-  const fur = new THREE.MeshStandardMaterial({ color: 0x9a6b3f })
+  const fur = new THREE.MeshLambertMaterial({ color: 0x9a6b3f })
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.35, 4, 8), fur)
   body.position.y = 0.45
   g.add(body)
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), fur)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), fur)
   head.position.y = 0.95
   g.add(head)
   const hat = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.22, 0.24, 0.12, 12),
-    new THREE.MeshStandardMaterial({ color: 0xf5c518 }),
+    new THREE.CylinderGeometry(0.22, 0.24, 0.12, 10),
+    new THREE.MeshLambertMaterial({ color: 0xf5c518 }),
   )
   hat.position.y = 1.12
   g.add(hat)
   return g
 }
 
-function spawnFauna(fauna: THREE.Group, rand: () => number) {
-  // Birds
-  for (let i = 0; i < 5; i++) {
+function spawnFauna(fauna: THREE.Group, rand: () => number, software: boolean) {
+  const birdN = software ? 4 : 8
+  const crabN = software ? 5 : 10
+  const bfN = software ? 4 : 10
+
+  for (let i = 0; i < birdN; i++) {
     const bird = new THREE.Group()
     const body = new THREE.Mesh(
-      new THREE.ConeGeometry(0.08, 0.28, 6),
-      new THREE.MeshStandardMaterial({ color: 0xf1faee }),
+      new THREE.ConeGeometry(0.08, 0.28, 5),
+      new THREE.MeshLambertMaterial({ color: 0xf1faee }),
     )
     body.rotation.z = Math.PI / 2
     bird.add(body)
     const wing = new THREE.Mesh(
       new THREE.BoxGeometry(0.35, 0.04, 0.12),
-      new THREE.MeshStandardMaterial({ color: 0xe63946 }),
+      new THREE.MeshLambertMaterial({ color: 0xe63946 }),
     )
     wing.name = 'wing'
     bird.add(wing)
-    bird.position.set((rand() - 0.5) * 60, 6 + rand() * 8, (rand() - 0.5) * 60)
+    bird.position.set((rand() - 0.5) * 160, 8 + rand() * 10, (rand() - 0.5) * 160)
     bird.userData = {
       kind: 'bird',
       phase: rand() * Math.PI * 2,
-      radius: 18 + rand() * 22,
-      speed: 0.25 + rand() * 0.35,
+      radius: 40 + rand() * 50,
+      speed: 0.18 + rand() * 0.28,
       height: bird.position.y,
     }
     fauna.add(bird)
   }
 
-  // Crabs
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < crabN; i++) {
     const crab = new THREE.Group()
     const shell = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0xe76f51 }),
+      new THREE.SphereGeometry(0.16, 8, 6),
+      new THREE.MeshLambertMaterial({ color: 0xe76f51 }),
     )
     shell.scale.set(1.2, 0.55, 1)
     crab.add(shell)
     for (const s of [-1, 1]) {
       const claw = new THREE.Mesh(
         new THREE.BoxGeometry(0.1, 0.05, 0.14),
-        new THREE.MeshStandardMaterial({ color: 0xf4a261 }),
+        new THREE.MeshLambertMaterial({ color: 0xf4a261 }),
       )
       claw.position.set(s * 0.18, 0, 0.12)
       crab.add(claw)
     }
     const a = rand() * Math.PI * 2
-    const r = ISLAND_RADIUS * 0.55 + rand() * 8
+    const r = ISLAND_RADIUS * 0.62 + rand() * 14
     const x = Math.cos(a) * r
     const z = Math.sin(a) * r
     crab.position.set(x, groundHeight(x, z) + 0.08, z)
-    crab.userData = {
-      kind: 'crab',
-      phase: rand() * Math.PI * 2,
-      ox: x,
-      oz: z,
-    }
+    crab.userData = { kind: 'crab', phase: rand() * Math.PI * 2, ox: x, oz: z }
     fauna.add(crab)
   }
 
-  // Butterflies
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < bfN; i++) {
     const bf = new THREE.Group()
     const col = new THREE.Color().setHSL(rand(), 0.75, 0.55)
     const wingL = new THREE.Mesh(
-      new THREE.CircleGeometry(0.12, 10),
-      new THREE.MeshStandardMaterial({ color: col, side: THREE.DoubleSide }),
+      new THREE.CircleGeometry(0.12, 8),
+      new THREE.MeshLambertMaterial({ color: col, side: THREE.DoubleSide }),
     )
     wingL.position.x = -0.08
     wingL.name = 'wingL'
@@ -496,15 +610,10 @@ function spawnFauna(fauna: THREE.Group, rand: () => number) {
     wingR.position.x = 0.08
     wingR.name = 'wingR'
     bf.add(wingL, wingR)
-    const x = (rand() - 0.5) * 30
-    const z = (rand() - 0.5) * 30
+    const x = (rand() - 0.5) * JUNGLE_RADIUS * 1.6
+    const z = (rand() - 0.5) * JUNGLE_RADIUS * 1.6
     bf.position.set(x, groundHeight(x, z) + 1.2 + rand(), z)
-    bf.userData = {
-      kind: 'butterfly',
-      phase: rand() * Math.PI * 2,
-      ox: x,
-      oz: z,
-    }
+    bf.userData = { kind: 'butterfly', phase: rand() * Math.PI * 2, ox: x, oz: z }
     fauna.add(bf)
   }
 }
@@ -540,21 +649,22 @@ export function animateFauna(fauna: THREE.Group, t: number) {
   }
 }
 
+const BANANA_MAT = new THREE.MeshLambertMaterial({
+  color: 0xffd12a,
+  emissive: 0x2a2000,
+  emissiveIntensity: 0.2,
+})
+
 export function createBananaMesh() {
   const g = new THREE.Group()
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffd12a, roughness: 0.45, emissive: 0x3a2a00, emissiveIntensity: 0.15 })
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.32, 5, 10), mat)
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.32, 4, 8), BANANA_MAT)
   body.rotation.z = 0.85
   body.rotation.x = 0.25
   body.castShadow = false
   g.add(body)
-  const body2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.22, 4, 8), mat)
-  body2.position.set(0.08, 0.06, 0)
-  body2.rotation.z = 1.15
-  g.add(body2)
   const tip = new THREE.Mesh(
-    new THREE.SphereGeometry(0.045, 8, 8),
-    new THREE.MeshStandardMaterial({ color: 0x3d2b1f }),
+    new THREE.SphereGeometry(0.045, 6, 6),
+    new THREE.MeshLambertMaterial({ color: 0x3d2b1f }),
   )
   tip.position.set(-0.12, 0.18, 0.02)
   g.add(tip)
@@ -564,20 +674,20 @@ export function createBananaMesh() {
 
 export function createRaft() {
   const g = new THREE.Group()
-  const wood = new THREE.MeshStandardMaterial({ color: 0x8d6b45, roughness: 0.9 })
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8d6b45 })
   for (let i = 0; i < 5; i++) {
-    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.4, 8), wood)
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.4, 6), wood)
     log.rotation.z = Math.PI / 2
     log.position.set(0, 0.12, (i - 2) * 0.28)
     log.castShadow = true
     g.add(log)
   }
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 8), wood)
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6), wood)
   mast.position.y = 0.9
   g.add(mast)
   const sail = new THREE.Mesh(
     new THREE.PlaneGeometry(1.1, 1.1),
-    new THREE.MeshStandardMaterial({ color: 0xfff1c9, side: THREE.DoubleSide }),
+    new THREE.MeshLambertMaterial({ color: 0xfff1c9, side: THREE.DoubleSide }),
   )
   sail.position.set(0.35, 1.1, 0)
   g.add(sail)

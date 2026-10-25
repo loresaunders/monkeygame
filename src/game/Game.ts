@@ -21,16 +21,20 @@ interface Buffs {
 export class Game {
   private renderer: THREE.WebGLRenderer
   private scene = new THREE.Scene()
-  private camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500)
+  private camera = new THREE.PerspectiveCamera(60, 1, 0.1, 900)
   private clock = new THREE.Clock()
   private input = new Input()
   private world!: WorldParts
   private player = createMonkey()
-  private playerPos = new THREE.Vector3(0, 2, -12)
+  private playerPos = new THREE.Vector3(0, 2, -70)
   private velocity = new THREE.Vector3()
   private onGround = false
+  /** Desired look (from mouse). */
   private yaw = 0
-  private pitch = 0.18
+  private pitch = 0.16
+  /** Smoothed look used by camera + movement. */
+  private lookYaw = 0
+  private lookPitch = 0.16
   private bananas = 0
   private bananaMeshes: THREE.Group[] = []
   private collected = new Set<number>()
@@ -48,14 +52,18 @@ export class Game {
     guardUntil: 0,
     waterBoostUntil: 0,
   }
-  private spawnPoint = new THREE.Vector3(0, 2, -12)
+  private spawnPoint = new THREE.Vector3(0, 2, -70)
   private readonly camOffset = new THREE.Vector3()
   private readonly tmp = new THREE.Vector3()
+  private readonly camPos = new THREE.Vector3()
   private animId = 0
   private canvas: HTMLCanvasElement
   private eWasUp = true
   private softwareGl = false
   private frame = 0
+  private readonly lookSens = 0.00085
+  private readonly lookSmooth = 14
+  private readonly maxMouseDelta = 32
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -87,20 +95,23 @@ export class Game {
   }
 
   start() {
-    this.world = createWorld(this.scene)
+    this.world = createWorld(this.scene, { softwareGl: this.softwareGl })
     if (this.softwareGl) {
       this.scene.fog = null
-      // Flat ocean — skip custom wave shader compiles on CPU GL
       const flatOcean = new THREE.MeshBasicMaterial({
         color: 0x1a8fb0,
         transparent: true,
         opacity: 0.9,
       })
+      ;(this.world.ocean.material as THREE.Material).dispose()
       this.world.ocean.material = flatOcean
       this.world.ocean.geometry.dispose()
-      this.world.ocean.geometry = new THREE.PlaneGeometry(900, 900, 1, 1)
+      this.world.ocean.geometry = new THREE.PlaneGeometry(1400, 1400, 1, 1)
       this.world.ocean.geometry.rotateX(-Math.PI / 2)
     }
+    this.playerPos.y = groundHeight(this.playerPos.x, this.playerPos.z)
+    this.spawnPoint.copy(this.playerPos)
+    this.camPos.set(this.playerPos.x, this.playerPos.y + 4, this.playerPos.z + 8)
     this.scene.add(this.player)
     this.player.position.copy(this.playerPos)
 
@@ -142,7 +153,7 @@ export class Game {
   }
 
   getLookAngles() {
-    return { yaw: this.yaw, pitch: this.pitch }
+    return { yaw: this.lookYaw, pitch: this.lookPitch }
   }
 
   isStarted() {
@@ -180,9 +191,9 @@ export class Game {
 
   /** Inject look delta as if the mouse moved while pointer-locked. */
   debugLook(dx: number, dy: number) {
-    this.yaw -= dx * 0.0022
-    this.pitch -= dy * 0.0022
-    this.pitch = Math.max(-0.15, Math.min(0.85, this.pitch))
+    this.applyLookDelta(dx, dy)
+    this.lookYaw = this.yaw
+    this.lookPitch = this.pitch
   }
 
   debugHoldKey(code: string, down: boolean) {
@@ -252,8 +263,8 @@ export class Game {
     }
 
     if (!this.started) {
-      this.camera.position.set(-22, 10, -30)
-      this.camera.lookAt(2, 2, -2)
+      this.camera.position.set(-48, 22, -95)
+      this.camera.lookAt(0, 3, -20)
       return
     }
 
@@ -263,7 +274,7 @@ export class Game {
       return
     }
 
-    this.handleLook()
+    this.handleLook(dt)
     this.handleMovement(dt, t)
     this.collectBananas()
     this.updateVendorProximity()
@@ -271,11 +282,20 @@ export class Game {
     this.updateStatusPills(t)
   }
 
-  private handleLook() {
+  private applyLookDelta(dx: number, dy: number) {
+    const cdx = Math.max(-this.maxMouseDelta, Math.min(this.maxMouseDelta, dx))
+    const cdy = Math.max(-this.maxMouseDelta, Math.min(this.maxMouseDelta, dy))
+    this.yaw -= cdx * this.lookSens
+    this.pitch -= cdy * this.lookSens
+    this.pitch = Math.max(-0.12, Math.min(0.72, this.pitch))
+  }
+
+  private handleLook(dt: number) {
     const { dx, dy } = this.input.consumeMouse()
-    this.yaw -= dx * 0.0022
-    this.pitch -= dy * 0.0022
-    this.pitch = Math.max(-0.15, Math.min(0.85, this.pitch))
+    this.applyLookDelta(dx, dy)
+    const a = 1 - Math.exp(-this.lookSmooth * dt)
+    this.lookYaw += (this.yaw - this.lookYaw) * a
+    this.lookPitch += (this.pitch - this.lookPitch) * a
   }
 
   private handleShopToggle() {
@@ -308,8 +328,8 @@ export class Game {
   }
 
   private handleMovement(dt: number, t: number) {
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw))
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw))
+    const forward = new THREE.Vector3(-Math.sin(this.lookYaw), 0, -Math.cos(this.lookYaw))
+    const right = new THREE.Vector3(Math.cos(this.lookYaw), 0, -Math.sin(this.lookYaw))
     const wish = new THREE.Vector3()
     if (this.input.pressed('KeyW')) wish.add(forward)
     if (this.input.pressed('KeyS')) wish.sub(forward)
@@ -335,7 +355,7 @@ export class Game {
         this.playerPos.y = WATER_LEVEL + 0.35
         if (this.raft) {
           this.raft.position.set(this.playerPos.x, WATER_LEVEL + 0.05, this.playerPos.z)
-          this.raft.rotation.y = this.yaw
+          this.raft.rotation.y = this.lookYaw
           this.raft.visible = true
         }
       } else if (canSwim) {
@@ -358,24 +378,24 @@ export class Game {
       if (this.raft) this.raft.visible = false
     }
 
-    // Gate collision
+    // Gate collision (wider opening on the larger island)
+    const gateHalf = 7.8
     if (!this.owned.has('unlock')) {
       const enteringCove =
         this.playerPos.z < GATE_Z && this.playerPos.z + wish.z * speed * dt > GATE_Z - 0.2
       if (
         enteringCove &&
-        Math.abs(this.playerPos.x) < 4.5 &&
-        Math.abs(this.playerPos.z - GATE_Z) < 2.5
+        Math.abs(this.playerPos.x) < gateHalf &&
+        Math.abs(this.playerPos.z - GATE_Z) < 3
       ) {
         wish.z = Math.min(wish.z, 0)
-        if (wish.z === 0 && this.playerPos.z > GATE_Z - 1.2) {
-          this.playerPos.z = Math.min(this.playerPos.z, GATE_Z - 0.6)
+        if (wish.z === 0 && this.playerPos.z > GATE_Z - 1.5) {
+          this.playerPos.z = Math.min(this.playerPos.z, GATE_Z - 0.7)
           this.toast('North Cove is locked — buy the key from Coco.')
         }
       }
-      // Hard wall
-      if (Math.abs(this.playerPos.x) < 4.6 && this.playerPos.z > GATE_Z - 0.5) {
-        this.playerPos.z = Math.min(this.playerPos.z, GATE_Z - 0.55)
+      if (Math.abs(this.playerPos.x) < gateHalf + 0.3 && this.playerPos.z > GATE_Z - 0.6) {
+        this.playerPos.z = Math.min(this.playerPos.z, GATE_Z - 0.65)
       }
     }
 
@@ -417,19 +437,20 @@ export class Game {
       }
     }
 
-    // Soft world bound
+    // Soft world bound (scaled with the larger island)
+    const bound = 320
     const r = Math.hypot(this.playerPos.x, this.playerPos.z)
-    if (r > 120) {
-      this.playerPos.x *= 120 / r
-      this.playerPos.z *= 120 / r
+    if (r > bound) {
+      this.playerPos.x *= bound / r
+      this.playerPos.z *= bound / r
     }
 
     this.player.position.copy(this.playerPos)
     if (wish.lengthSq() > 0.01) {
       const face = Math.atan2(wish.x, wish.z)
       this.player.rotation.y = face
-      // walk bob
-      this.player.position.y += Math.abs(Math.sin(t * 10)) * 0.04
+      // Visual bob only on the mesh — camera lookAt stays on stable playerPos
+      this.player.position.y += Math.abs(Math.sin(t * 10)) * 0.035
     }
   }
 
@@ -486,19 +507,21 @@ export class Game {
     }
   }
 
-  private updateCamera(_dt: number) {
-    const dist = 6.4
-    const height = 2.8
+  private updateCamera(dt: number) {
+    const dist = 6.6
+    const height = 2.7
     this.camOffset.set(
-      Math.sin(this.yaw) * dist * Math.cos(this.pitch),
-      height + Math.sin(this.pitch) * dist,
-      Math.cos(this.yaw) * dist * Math.cos(this.pitch),
+      Math.sin(this.lookYaw) * dist * Math.cos(this.lookPitch),
+      height + Math.sin(this.lookPitch) * dist,
+      Math.cos(this.lookYaw) * dist * Math.cos(this.lookPitch),
     )
     this.tmp.copy(this.playerPos).add(this.camOffset)
-    // Keep camera above terrain so hills clip less often
-    const camGround = groundHeight(this.tmp.x, this.tmp.z) + 1.6
+    const camGround = groundHeight(this.tmp.x, this.tmp.z) + 1.7
     if (this.tmp.y < camGround) this.tmp.y = camGround
-    this.camera.position.lerp(this.tmp, 0.18)
+    // Follow rate tied to dt so it doesn't jitter against look smoothing
+    const follow = 1 - Math.exp(-16 * dt)
+    this.camPos.lerp(this.tmp, follow)
+    this.camera.position.copy(this.camPos)
     this.camera.lookAt(this.playerPos.x, this.playerPos.y + 1.25, this.playerPos.z)
   }
 
@@ -604,8 +627,8 @@ export class Game {
   private openGate() {
     const rope = this.world.gate.getObjectByName('gateRope')
     if (rope) rope.visible = false
-    this.world.gate.rotation.y = 0.9
-    this.world.gate.position.x = 3.5
+    this.world.gate.rotation.y = 0.85
+    this.world.gate.position.x = 6
     this.toast('North Cove unlocked!', true)
   }
 
