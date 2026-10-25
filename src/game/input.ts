@@ -3,10 +3,19 @@ export class Input {
   mouseDX = 0
   mouseDY = 0
   pointerLocked = false
+  private wasPointerLocked = false
+  /** Fires once when pointer lock is lost after having been locked. */
+  onPointerUnlock: (() => void) | null = null
 
   private readonly onKeyDown = (e: KeyboardEvent) => {
+    if (e.repeat) return
     this.keys.add(e.code)
-    if (['Space', 'KeyE'].includes(e.code)) e.preventDefault()
+    if (e.code === 'Space' || e.code === 'KeyE' || e.code.startsWith('Key')) {
+      // Keep WASD/Space from scrolling / activating chrome UI while playing
+      if (['Space', 'KeyE', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
+        e.preventDefault()
+      }
+    }
   }
 
   private readonly onKeyUp = (e: KeyboardEvent) => {
@@ -21,6 +30,21 @@ export class Input {
 
   private readonly onPointerLockChange = () => {
     this.pointerLocked = document.pointerLockElement !== null
+    if (this.wasPointerLocked && !this.pointerLocked) {
+      // Keep WASD state — unlocking the mouse (Esc) must not cancel movement.
+      this.mouseDX = 0
+      this.mouseDY = 0
+      this.onPointerUnlock?.()
+    }
+    this.wasPointerLocked = this.pointerLocked
+  }
+
+  private readonly onVisibility = () => {
+    if (document.hidden) {
+      this.clearKeys()
+      this.mouseDX = 0
+      this.mouseDY = 0
+    }
   }
 
   attach() {
@@ -28,6 +52,7 @@ export class Input {
     window.addEventListener('keyup', this.onKeyUp)
     window.addEventListener('mousemove', this.onMouseMove)
     document.addEventListener('pointerlockchange', this.onPointerLockChange)
+    document.addEventListener('visibilitychange', this.onVisibility)
   }
 
   detach() {
@@ -35,6 +60,11 @@ export class Input {
     window.removeEventListener('keyup', this.onKeyUp)
     window.removeEventListener('mousemove', this.onMouseMove)
     document.removeEventListener('pointerlockchange', this.onPointerLockChange)
+    document.removeEventListener('visibilitychange', this.onVisibility)
+  }
+
+  clearKeys() {
+    this.keys.clear()
   }
 
   consumeMouse() {

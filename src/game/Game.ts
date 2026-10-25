@@ -64,7 +64,7 @@ export class Game {
     })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.05
@@ -84,6 +84,11 @@ export class Game {
     })
 
     this.input.attach()
+    this.input.onPointerUnlock = () => {
+      if (this.started && !this.shopOpen) {
+        this.toast('Click the game to look around again', true)
+      }
+    }
     window.addEventListener('resize', this.onResize)
     this.canvas.addEventListener('click', this.requestLock)
     document.getElementById('shop-close')?.addEventListener('click', () => this.setShopOpen(false))
@@ -96,9 +101,28 @@ export class Game {
 
   beginPlay() {
     this.started = true
-    document.getElementById('start-screen')?.classList.add('hidden')
+    const start = document.getElementById('start-screen')
+    start?.classList.add('hidden')
+    start?.setAttribute('aria-hidden', 'true')
     this.requestLock()
     this.toast('Welcome to Monkey Island — find bananas!', true)
+  }
+
+  getPlayerPosition() {
+    return this.playerPos.clone()
+  }
+
+  getLookAngles() {
+    return { yaw: this.yaw, pitch: this.pitch }
+  }
+
+  isStarted() {
+    return this.started
+  }
+
+  isStartScreenVisible() {
+    const el = document.getElementById('start-screen')
+    return !!el && !el.classList.contains('hidden')
   }
 
   /** Debug / QA helpers */
@@ -123,6 +147,26 @@ export class Game {
     this.bananas += n
     this.updateHUD()
     this.renderShop()
+  }
+
+  /** Inject look delta as if the mouse moved while pointer-locked. */
+  debugLook(dx: number, dy: number) {
+    this.yaw -= dx * 0.0022
+    this.pitch -= dy * 0.0022
+    this.pitch = Math.max(-0.15, Math.min(0.85, this.pitch))
+  }
+
+  debugHoldKey(code: string, down: boolean) {
+    if (down) this.input.keys.add(code)
+    else this.input.keys.delete(code)
+  }
+
+  /** Run N fixed simulation steps (for headless QA where rAF may throttle). */
+  debugTick(steps = 60, dt = 1 / 60) {
+    const t0 = this.clock.elapsedTime
+    for (let i = 0; i < steps; i++) {
+      this.update(dt, t0 + i * dt)
+    }
   }
 
   dispose() {
@@ -248,7 +292,7 @@ export class Game {
     const canSwim = this.owned.has('swim')
     const hasRaft = this.owned.has('raft')
 
-    let speed = 7.2
+    let speed = 8.5
     if (t < this.buffs.speedUntil) speed *= 1.55
     if (inWater && t < this.buffs.waterBoostUntil) speed *= 1.35
 
