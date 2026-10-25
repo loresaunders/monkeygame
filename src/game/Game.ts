@@ -389,19 +389,19 @@ export class Game {
   }
 
   private updateCamera(_dt: number) {
-    const dist = 5.2
-    const height = 2.4
+    const dist = 6.4
+    const height = 2.8
     this.camOffset.set(
       Math.sin(this.yaw) * dist * Math.cos(this.pitch),
       height + Math.sin(this.pitch) * dist,
       Math.cos(this.yaw) * dist * Math.cos(this.pitch),
     )
     this.tmp.copy(this.playerPos).add(this.camOffset)
-    // Keep camera above terrain so palm fronds / hills clip less often
-    const camGround = groundHeight(this.tmp.x, this.tmp.z) + 1.4
+    // Keep camera above terrain so hills clip less often
+    const camGround = groundHeight(this.tmp.x, this.tmp.z) + 1.6
     if (this.tmp.y < camGround) this.tmp.y = camGround
     this.camera.position.lerp(this.tmp, 0.18)
-    this.camera.lookAt(this.playerPos.x, this.playerPos.y + 1.2, this.playerPos.z)
+    this.camera.lookAt(this.playerPos.x, this.playerPos.y + 1.25, this.playerPos.z)
   }
 
   private updateHUD() {

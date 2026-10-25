@@ -283,15 +283,15 @@ function makePalm(rand: () => number) {
   })
   for (let i = 0; i < 7; i++) {
     const frond = new THREE.Group()
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2.4, 6, 1, true), leafMat)
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.7, 6, 1, true), leafMat)
     leaf.rotation.x = Math.PI / 2
-    leaf.position.z = 1.05
+    leaf.position.z = 0.75
     leaf.castShadow = true
     frond.add(leaf)
     frond.position.y = topY
     frond.rotation.order = 'YXZ'
     frond.rotation.y = (i / 7) * Math.PI * 2 + rand() * 0.2
-    frond.rotation.x = 0.55 + rand() * 0.25
+    frond.rotation.x = 0.35 + rand() * 0.2
     g.add(frond)
   }
   for (let i = 0; i < 3; i++) {
