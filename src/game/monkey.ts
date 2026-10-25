@@ -28,6 +28,7 @@ export function createMonkey(): THREE.Group {
   torso.position.y = 0.95
   torso.castShadow = true
   root.add(torso)
+  // Only torso casts — avoids ~10 shadow draws for one character
 
   const belly = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), skin)
   belly.scale.set(1, 1.1, 0.7)
@@ -36,7 +37,7 @@ export function createMonkey(): THREE.Group {
 
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 14), fur)
   head.position.y = 1.48
-  head.castShadow = true
+  head.castShadow = false
   root.add(head)
 
   const face = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 10), skin)
@@ -79,7 +80,7 @@ export function createMonkey(): THREE.Group {
     const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.32, 4, 8), fur)
     arm.position.set(side * 0.38, 1.05, 0)
     arm.rotation.z = side * 0.25
-    arm.castShadow = true
+    arm.castShadow = false
     root.add(arm)
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), skin)
     hand.position.set(side * 0.42, 0.78, 0.05)
@@ -90,12 +91,12 @@ export function createMonkey(): THREE.Group {
   for (const side of [-1, 1]) {
     const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.28, 4, 8), furDark)
     leg.position.set(side * 0.14, 0.48, 0)
-    leg.castShadow = true
+    leg.castShadow = false
     root.add(leg)
 
     const foot = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.24), side < 0 ? sandalL : sandalR)
     foot.position.set(side * 0.14, 0.12, 0.04)
-    foot.castShadow = true
+    foot.castShadow = false
     root.add(foot)
 
     const strap = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.03, 0.04), white)

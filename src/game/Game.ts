@@ -54,6 +54,8 @@ export class Game {
   private animId = 0
   private canvas: HTMLCanvasElement
   private eWasUp = true
+  private softwareGl = false
+  private frame = 0
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -62,16 +64,43 @@ export class Game {
       antialias: true,
       powerPreference: 'high-performance',
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFShadowMap
+    this.renderer.shadowMap.type = THREE.BasicShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.05
+
+    // Software WebGL (SwiftShader/llvmpipe) can't keep up with shadow maps / PBR
+    const gl = this.renderer.getContext()
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+    const gpu = dbg
+      ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '')
+      : ''
+    if (/swiftshader|llvmpipe|softpipe|software/i.test(gpu)) {
+      this.softwareGl = true
+      this.renderer.shadowMap.enabled = false
+      this.renderer.setPixelRatio(1)
+      this.renderer.toneMapping = THREE.NoToneMapping
+      console.info('[perf] Software WebGL detected — low-cost path:', gpu)
+    }
   }
 
   start() {
     this.world = createWorld(this.scene)
+    if (this.softwareGl) {
+      this.scene.fog = null
+      // Flat ocean — skip custom wave shader compiles on CPU GL
+      const flatOcean = new THREE.MeshBasicMaterial({
+        color: 0x1a8fb0,
+        transparent: true,
+        opacity: 0.9,
+      })
+      this.world.ocean.material = flatOcean
+      this.world.ocean.geometry.dispose()
+      this.world.ocean.geometry = new THREE.PlaneGeometry(900, 900, 1, 1)
+      this.world.ocean.geometry.rotateX(-Math.PI / 2)
+    }
     this.scene.add(this.player)
     this.player.position.copy(this.playerPos)
 
@@ -199,22 +228,23 @@ export class Game {
   }
 
   private update(dt: number, t: number) {
-    // Ocean shimmer
-    const oceanPos = this.world.ocean.geometry.attributes.position
-    for (let i = 0; i < oceanPos.count; i++) {
-      const x = oceanPos.getX(i)
-      const z = oceanPos.getZ(i)
-      oceanPos.setY(i, Math.sin(x * 0.08 + t * 1.4) * 0.12 + Math.cos(z * 0.07 + t * 1.1) * 0.1)
-    }
-    oceanPos.needsUpdate = true
-    this.world.ocean.geometry.computeVertexNormals()
+    this.frame++
+    const oceanShader = (this.world.ocean.material as THREE.MeshStandardMaterial).userData?.shader as
+      | { uniforms: { uTime: { value: number } } }
+      | undefined
+    if (oceanShader) oceanShader.uniforms.uTime.value = t
 
-    animateFauna(this.world.fauna, t)
-    this.bananaMeshes.forEach((b, i) => {
-      if (this.collected.has(i)) return
-      b.rotation.y = t * 2
-      b.position.y = this.world.bananaPositions[i].y + Math.sin(t * 3 + i) * 0.08
-    })
+    // Fauna / banana bob: full rate on GPU, every 2–3 frames on software GL
+    const animNow = !this.softwareGl || this.frame % 3 === 0
+    if (animNow) {
+      animateFauna(this.world.fauna, t)
+      const bananaParity = (this.frame & 1) as 0 | 1
+      this.bananaMeshes.forEach((b, i) => {
+        if (this.collected.has(i) || (i & 1) !== bananaParity) return
+        b.rotation.y = t * 2
+        b.position.y = this.world.bananaPositions[i].y + Math.sin(t * 3 + i) * 0.08
+      })
+    }
 
     if (this.toastTimer > 0) {
       this.toastTimer -= dt

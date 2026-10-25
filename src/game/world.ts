@@ -37,13 +37,15 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   const sunLight = new THREE.DirectionalLight(0xfff1c9, 1.55)
   sunLight.position.set(40, 55, 18)
   sunLight.castShadow = true
-  sunLight.shadow.mapSize.set(2048, 2048)
+  // 1024 is enough for this island scale; 2048 doubled shadow-pass fill cost
+  sunLight.shadow.mapSize.set(1024, 1024)
   sunLight.shadow.camera.near = 1
-  sunLight.shadow.camera.far = 140
-  sunLight.shadow.camera.left = -55
-  sunLight.shadow.camera.right = 55
-  sunLight.shadow.camera.top = 55
-  sunLight.shadow.camera.bottom = -55
+  sunLight.shadow.camera.far = 120
+  sunLight.shadow.camera.left = -48
+  sunLight.shadow.camera.right = 48
+  sunLight.shadow.camera.top = 48
+  sunLight.shadow.camera.bottom = -48
+  sunLight.shadow.bias = -0.0008
   scene.add(sunLight)
 
   const sun = new THREE.Mesh(
@@ -68,7 +70,7 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   scene.add(ambient)
 
   // Island terrain mesh
-  const seg = 128
+  const seg = 96
   const size = ISLAND_RADIUS * 2.2
   const geo = new THREE.PlaneGeometry(size, size, seg, seg)
   geo.rotateX(-Math.PI / 2)
@@ -106,24 +108,34 @@ export function createWorld(scene: THREE.Scene): WorldParts {
     }),
   )
   island.receiveShadow = true
-  island.castShadow = true
+  island.castShadow = false // huge terrain shadow cast is expensive for little gain
   group.add(island)
 
-  // Ocean
-  const oceanGeo = new THREE.PlaneGeometry(900, 900, 64, 64)
+  // Ocean — GPU vertex waves (no per-frame CPU attribute uploads / normals)
+  const oceanGeo = new THREE.PlaneGeometry(900, 900, 32, 32)
   oceanGeo.rotateX(-Math.PI / 2)
-  const ocean = new THREE.Mesh(
-    oceanGeo,
-    new THREE.MeshStandardMaterial({
-      color: 0x1a8fb0,
-      roughness: 0.28,
-      metalness: 0.35,
-      transparent: true,
-      opacity: 0.92,
-    }),
-  )
+  const oceanMat = new THREE.MeshStandardMaterial({
+    color: 0x1a8fb0,
+    roughness: 0.28,
+    metalness: 0.35,
+    transparent: true,
+    opacity: 0.92,
+  })
+  oceanMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 }
+    shader.vertexShader = `uniform float uTime;\n` + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       transformed.y += sin(position.x * 0.08 + uTime * 1.4) * 0.12
+                      + cos(position.z * 0.07 + uTime * 1.1) * 0.10;`,
+    )
+    oceanMat.userData.shader = shader
+  }
+  oceanMat.customProgramCacheKey = () => 'monkey-ocean-waves-v1'
+  const ocean = new THREE.Mesh(oceanGeo, oceanMat)
   ocean.position.y = WATER_LEVEL
-  ocean.receiveShadow = true
+  ocean.receiveShadow = false
   group.add(ocean)
 
   // Distant horizon ring (no other land)
@@ -144,7 +156,7 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   const trees: THREE.Object3D[] = []
 
   // Coconut palms & bushes & rocks
-  for (let i = 0; i < 48; i++) {
+  for (let i = 0; i < 28; i++) {
     const a = rand() * Math.PI * 2
     const r = 8 + rand() * (ISLAND_RADIUS * 0.7)
     const x = Math.cos(a) * r
@@ -159,7 +171,7 @@ export function createWorld(scene: THREE.Scene): WorldParts {
     trees.push(tree)
   }
 
-  for (let i = 0; i < 55; i++) {
+  for (let i = 0; i < 28; i++) {
     const x = (rand() - 0.5) * ISLAND_RADIUS * 1.5
     const z = (rand() - 0.5) * ISLAND_RADIUS * 1.5
     const y = groundHeight(x, z)
@@ -169,7 +181,7 @@ export function createWorld(scene: THREE.Scene): WorldParts {
     group.add(bush)
   }
 
-  for (let i = 0; i < 28; i++) {
+  for (let i = 0; i < 14; i++) {
     const x = (rand() - 0.5) * ISLAND_RADIUS * 1.6
     const z = (rand() - 0.5) * ISLAND_RADIUS * 1.6
     const y = groundHeight(x, z)
@@ -263,12 +275,17 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   }
 }
 
+const PALM_TRUNK_MAT = new THREE.MeshLambertMaterial({ color: 0x8a6a3d })
+const PALM_LEAF_MAT = new THREE.MeshLambertMaterial({ color: 0x2f9a44, side: THREE.DoubleSide })
+const PALM_COCO_MAT = new THREE.MeshLambertMaterial({ color: 0x5a3a1e })
+const ROCK_MAT = new THREE.MeshLambertMaterial({ color: 0x7d766c })
+
 function makePalm(rand: () => number) {
   const g = new THREE.Group()
   const trunkH = 4.4 + rand() * 1.2
   const trunk = new THREE.Mesh(
     new THREE.CylinderGeometry(0.11, 0.24, trunkH, 8),
-    new THREE.MeshStandardMaterial({ color: 0x8a6a3d, roughness: 0.9 }),
+    PALM_TRUNK_MAT,
   )
   trunk.position.y = trunkH / 2
   trunk.rotation.z = (rand() - 0.5) * 0.18
@@ -276,29 +293,21 @@ function makePalm(rand: () => number) {
   g.add(trunk)
 
   const topY = trunkH - 0.15
-  const leafMat = new THREE.MeshStandardMaterial({
-    color: 0x2f9a44,
-    side: THREE.DoubleSide,
-    roughness: 0.75,
-  })
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 5; i++) {
     const frond = new THREE.Group()
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.7, 6, 1, true), leafMat)
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.7, 5, 1, true), PALM_LEAF_MAT)
     leaf.rotation.x = Math.PI / 2
     leaf.position.z = 0.75
-    leaf.castShadow = true
+    leaf.castShadow = false
     frond.add(leaf)
     frond.position.y = topY
     frond.rotation.order = 'YXZ'
-    frond.rotation.y = (i / 7) * Math.PI * 2 + rand() * 0.2
+    frond.rotation.y = (i / 5) * Math.PI * 2 + rand() * 0.2
     frond.rotation.x = 0.35 + rand() * 0.2
     g.add(frond)
   }
   for (let i = 0; i < 3; i++) {
-    const coco = new THREE.Mesh(
-      new THREE.SphereGeometry(0.15, 8, 8),
-      new THREE.MeshStandardMaterial({ color: 0x5a3a1e }),
-    )
+    const coco = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), PALM_COCO_MAT)
     const ang = (i / 3) * Math.PI * 2
     coco.position.set(Math.cos(ang) * 0.22, topY - 0.4, Math.sin(ang) * 0.22)
     g.add(coco)
@@ -308,27 +317,23 @@ function makePalm(rand: () => number) {
 
 function makeBush(rand: () => number) {
   const g = new THREE.Group()
-  const mat = new THREE.MeshStandardMaterial({
+  const mat = new THREE.MeshLambertMaterial({
     color: new THREE.Color().setHSL(0.28 + rand() * 0.06, 0.55, 0.32 + rand() * 0.1),
-    roughness: 0.9,
   })
-  for (let i = 0; i < 3; i++) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.35 + rand() * 0.25, 10, 8), mat)
+  for (let i = 0; i < 2; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.35 + rand() * 0.25, 8, 6), mat)
     s.position.set((rand() - 0.5) * 0.5, 0.3 + rand() * 0.2, (rand() - 0.5) * 0.5)
-    s.castShadow = true
+    s.castShadow = false
     g.add(s)
   }
   return g
 }
 
 function makeRock(rand: () => number) {
-  const mesh = new THREE.Mesh(
-    new THREE.DodecahedronGeometry(0.35 + rand() * 0.55, 0),
-    new THREE.MeshStandardMaterial({ color: 0x7d766c, roughness: 0.95, flatShading: true }),
-  )
+  const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.35 + rand() * 0.55, 0), ROCK_MAT)
   mesh.scale.set(1 + rand(), 0.6 + rand() * 0.7, 1 + rand() * 0.4)
   mesh.rotation.set(rand(), rand(), rand())
-  mesh.castShadow = true
+  mesh.castShadow = false
   mesh.receiveShadow = true
   return mesh
 }
@@ -421,7 +426,7 @@ function createSimpleVendorNpc() {
 
 function spawnFauna(fauna: THREE.Group, rand: () => number) {
   // Birds
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 5; i++) {
     const bird = new THREE.Group()
     const body = new THREE.Mesh(
       new THREE.ConeGeometry(0.08, 0.28, 6),
@@ -478,7 +483,7 @@ function spawnFauna(fauna: THREE.Group, rand: () => number) {
   }
 
   // Butterflies
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 6; i++) {
     const bf = new THREE.Group()
     const col = new THREE.Color().setHSL(rand(), 0.75, 0.55)
     const wingL = new THREE.Mesh(
@@ -541,7 +546,7 @@ export function createBananaMesh() {
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.32, 5, 10), mat)
   body.rotation.z = 0.85
   body.rotation.x = 0.25
-  body.castShadow = true
+  body.castShadow = false
   g.add(body)
   const body2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.22, 4, 8), mat)
   body2.position.set(0.08, 0.06, 0)
