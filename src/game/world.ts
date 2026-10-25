@@ -254,32 +254,42 @@ export function createWorld(scene: THREE.Scene): WorldParts {
 
 function makePalm(rand: () => number) {
   const g = new THREE.Group()
+  const trunkH = 4.4 + rand() * 1.2
   const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.22, 4.2 + rand(), 8),
+    new THREE.CylinderGeometry(0.11, 0.24, trunkH, 8),
     new THREE.MeshStandardMaterial({ color: 0x8a6a3d, roughness: 0.9 }),
   )
-  trunk.position.y = 2.1
-  trunk.rotation.z = (rand() - 0.5) * 0.2
+  trunk.position.y = trunkH / 2
+  trunk.rotation.z = (rand() - 0.5) * 0.18
   trunk.castShadow = true
   g.add(trunk)
 
-  const topY = 4.1
-  for (let i = 0; i < 6; i++) {
-    const leaf = new THREE.Mesh(
-      new THREE.ConeGeometry(0.35, 1.8, 5, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0x2f8a3c, side: THREE.DoubleSide, roughness: 0.8 }),
-    )
-    leaf.position.set(0, topY, 0)
-    leaf.rotation.set(0.9, (i / 6) * Math.PI * 2, 0.15)
+  const topY = trunkH - 0.15
+  const leafMat = new THREE.MeshStandardMaterial({
+    color: 0x2f9a44,
+    side: THREE.DoubleSide,
+    roughness: 0.75,
+  })
+  for (let i = 0; i < 7; i++) {
+    const frond = new THREE.Group()
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2.4, 6, 1, true), leafMat)
+    leaf.rotation.x = Math.PI / 2
+    leaf.position.z = 1.05
     leaf.castShadow = true
-    g.add(leaf)
+    frond.add(leaf)
+    frond.position.y = topY
+    frond.rotation.order = 'YXZ'
+    frond.rotation.y = (i / 7) * Math.PI * 2 + rand() * 0.2
+    frond.rotation.x = 0.55 + rand() * 0.25
+    g.add(frond)
   }
   for (let i = 0; i < 3; i++) {
     const coco = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14, 8, 8),
+      new THREE.SphereGeometry(0.15, 8, 8),
       new THREE.MeshStandardMaterial({ color: 0x5a3a1e }),
     )
-    coco.position.set((i - 1) * 0.16, topY - 0.35, 0.15)
+    const ang = (i / 3) * Math.PI * 2
+    coco.position.set(Math.cos(ang) * 0.22, topY - 0.4, Math.sin(ang) * 0.22)
     g.add(coco)
   }
   return g
@@ -502,17 +512,23 @@ export function animateFauna(fauna: THREE.Group, t: number) {
 
 export function createBananaMesh() {
   const g = new THREE.Group()
-  const mat = new THREE.MeshStandardMaterial({ color: 0xf5c518, roughness: 0.55 })
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.28, 4, 8), mat)
-  body.rotation.z = 0.5
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffd12a, roughness: 0.45, emissive: 0x3a2a00, emissiveIntensity: 0.15 })
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.32, 5, 10), mat)
+  body.rotation.z = 0.85
+  body.rotation.x = 0.25
   body.castShadow = true
   g.add(body)
+  const body2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.22, 4, 8), mat)
+  body2.position.set(0.08, 0.06, 0)
+  body2.rotation.z = 1.15
+  g.add(body2)
   const tip = new THREE.Mesh(
-    new THREE.SphereGeometry(0.05, 8, 8),
+    new THREE.SphereGeometry(0.045, 8, 8),
     new THREE.MeshStandardMaterial({ color: 0x3d2b1f }),
   )
-  tip.position.set(-0.05, 0.2, 0)
+  tip.position.set(-0.12, 0.18, 0.02)
   g.add(tip)
+  g.scale.setScalar(1.15)
   return g
 }
 

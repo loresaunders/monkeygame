@@ -30,7 +30,7 @@ export class Game {
   private velocity = new THREE.Vector3()
   private onGround = false
   private yaw = 0
-  private pitch = 0.28
+  private pitch = 0.18
   private bananas = 0
   private bananaMeshes: THREE.Group[] = []
   private collected = new Set<number>()
@@ -154,8 +154,8 @@ export class Game {
     }
 
     if (!this.started) {
-      this.camera.position.set(-18, 12, -28)
-      this.camera.lookAt(0, 1, 0)
+      this.camera.position.set(-22, 10, -30)
+      this.camera.lookAt(2, 2, -2)
       return
     }
 
