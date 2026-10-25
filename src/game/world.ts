@@ -47,11 +47,22 @@ export function createWorld(scene: THREE.Scene): WorldParts {
   scene.add(sunLight)
 
   const sun = new THREE.Mesh(
-    new THREE.SphereGeometry(4.5, 24, 24),
-    new THREE.MeshBasicMaterial({ color: 0xffe566 }),
+    new THREE.SphereGeometry(6.5, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xfff0a0 }),
   )
-  sun.position.set(55, 42, 30)
+  sun.position.set(70, 48, 35)
   scene.add(sun)
+  const sunGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(11, 24, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xffcc55,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+    }),
+  )
+  sunGlow.position.copy(sun.position)
+  scene.add(sunGlow)
 
   const ambient = new THREE.AmbientLight(0xffffff, 0.22)
   scene.add(ambient)
@@ -372,6 +383,20 @@ export function createVendorStand() {
   )
   crate.position.set(-1.4, 0.35, 0.5)
   g.add(crate)
+
+  // Tall shop banner so the stand is easy to spot
+  const flagPole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 4.2, 8),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a2e }),
+  )
+  flagPole.position.set(1.6, 2.1, 0.6)
+  g.add(flagPole)
+  const flag = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.4, 0.9),
+    new THREE.MeshStandardMaterial({ color: 0xf5c518, side: THREE.DoubleSide }),
+  )
+  flag.position.set(2.25, 3.5, 0.6)
+  g.add(flag)
 
   return g
 }
