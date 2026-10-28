@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "vercel-build": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
