@@ -4,7 +4,6 @@ import { createMonkey } from './monkey'
 import { SHOP_ITEMS, type ShopItemId } from './catalog'
 import {
   animateFauna,
-  createBananaMesh,
   createRaft,
   createWorld,
   type WorldParts,
@@ -36,8 +35,8 @@ export class Game {
   private lookYaw = 0
   private lookPitch = 0.16
   private bananas = 0
-  private bananaMeshes: THREE.Group[] = []
   private collected = new Set<number>()
+  private readonly bananaDummy = new THREE.Object3D()
   private owned = new Set<ShopItemId>()
   private shopOpen = false
   private started = false
@@ -61,18 +60,18 @@ export class Game {
   private eWasUp = true
   private softwareGl = false
   private frame = 0
-  private readonly lookSens = 0.00085
-  private readonly lookSmooth = 14
-  private readonly maxMouseDelta = 32
+  private readonly lookSens = 0.0007
+  private readonly lookSmooth = 16
+  private readonly maxMouseDelta = 24
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: false, // big win; low-poly scene doesn't need MSAA
       powerPreference: 'high-performance',
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25))
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.BasicShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -91,6 +90,9 @@ export class Game {
       this.renderer.setPixelRatio(1)
       this.renderer.toneMapping = THREE.NoToneMapping
       console.info('[perf] Software WebGL detected — low-cost path:', gpu)
+    } else {
+      // Real GPU: keep a tiny shadow budget (player only) — foliage never casts
+      this.renderer.shadowMap.enabled = true
     }
   }
 
@@ -115,22 +117,17 @@ export class Game {
     this.scene.add(this.player)
     this.player.position.copy(this.playerPos)
 
-    this.world.bananaPositions.forEach((p, i) => {
-      const b = createBananaMesh()
-      b.position.copy(p)
-      b.userData.index = i
-      this.scene.add(b)
-      this.bananaMeshes.push(b)
-    })
-
     this.input.attach()
     this.input.onPointerUnlock = () => {
+      // Do not clear WASD. Prompt once; next pointerdown re-locks.
       if (this.started && !this.shopOpen) {
-        this.toast('Click the game to look around again', true)
+        this.toast('Click game to re-capture mouse', true)
       }
     }
     window.addEventListener('resize', this.onResize)
-    this.canvas.addEventListener('click', this.requestLock)
+    // Re-lock on any press while playing — stop the cursor escaping the window
+    this.canvas.addEventListener('pointerdown', this.requestLock)
+    document.addEventListener('pointerdown', this.onDocPointerDown)
     document.getElementById('shop-close')?.addEventListener('click', () => this.setShopOpen(false))
     document.getElementById('shop-grid')?.addEventListener('click', this.onShopClick)
     this.onResize()
@@ -213,13 +210,29 @@ export class Game {
     cancelAnimationFrame(this.animId)
     this.input.detach()
     window.removeEventListener('resize', this.onResize)
-    this.canvas.removeEventListener('click', this.requestLock)
+    this.canvas.removeEventListener('pointerdown', this.requestLock)
+    document.removeEventListener('pointerdown', this.onDocPointerDown)
     this.renderer.dispose()
+  }
+
+  private onDocPointerDown = (e: PointerEvent) => {
+    if (!this.started || this.shopOpen) return
+    const t = e.target as HTMLElement | null
+    if (t?.closest?.('#shop-overlay, #shop-panel, button, a')) return
+    this.requestLock()
   }
 
   private requestLock = () => {
     if (!this.started || this.shopOpen) return
-    this.canvas.requestPointerLock()
+    if (document.pointerLockElement === this.canvas) return
+    const canvas = this.canvas as HTMLCanvasElement & {
+      requestPointerLock: (options?: { unadjustedMovement?: boolean }) => void
+    }
+    try {
+      canvas.requestPointerLock({ unadjustedMovement: true })
+    } catch {
+      this.canvas.requestPointerLock()
+    }
   }
 
   private onResize = () => {
@@ -245,16 +258,12 @@ export class Game {
       | undefined
     if (oceanShader) oceanShader.uniforms.uTime.value = t
 
-    // Fauna / banana bob: full rate on GPU, every 2–3 frames on software GL
-    const animNow = !this.softwareGl || this.frame % 3 === 0
-    if (animNow) {
-      animateFauna(this.world.fauna, t)
-      const bananaParity = (this.frame & 1) as 0 | 1
-      this.bananaMeshes.forEach((b, i) => {
-        if (this.collected.has(i) || (i & 1) !== bananaParity) return
-        b.rotation.y = t * 2
-        b.position.y = this.world.bananaPositions[i].y + Math.sin(t * 3 + i) * 0.08
-      })
+    // Fauna: every other frame on GPU, every 3rd on software
+    const faunaEvery = this.softwareGl ? 3 : 2
+    if (this.frame % faunaEvery === 0) animateFauna(this.world.fauna, t)
+    // Banana bob via instanced mesh if present
+    if (this.world.bananaInstances && this.frame % 2 === 0) {
+      this.updateBananaInstances(t)
     }
 
     if (this.toastTimer > 0) {
@@ -479,19 +488,40 @@ export class Game {
   }
 
   private collectBananas() {
-    this.bananaMeshes.forEach((b, i) => {
+    const mesh = this.world.bananaInstances
+    this.world.bananaPositions.forEach((pos, i) => {
       if (this.collected.has(i)) return
-      // Gated bananas: only collectible if unlocked when behind gate
-      const pos = this.world.bananaPositions[i]
       if (pos.z > GATE_Z && !this.owned.has('unlock')) return
-      if (this.playerPos.distanceTo(b.position) < 1.1) {
+      if (this.playerPos.distanceTo(pos) < 1.15) {
         this.collected.add(i)
-        b.visible = false
         this.bananas += 1
+        if (mesh) {
+          this.bananaDummy.position.copy(pos)
+          this.bananaDummy.scale.setScalar(0)
+          this.bananaDummy.updateMatrix()
+          mesh.setMatrixAt(i, this.bananaDummy.matrix)
+          mesh.instanceMatrix.needsUpdate = true
+        }
         this.updateHUD()
         this.toast(`Banana +1 · total ${this.bananas}`, true)
       }
     })
+  }
+
+  private updateBananaInstances(t: number) {
+    const mesh = this.world.bananaInstances
+    if (!mesh) return
+    let dirty = false
+    this.world.bananaPositions.forEach((pos, i) => {
+      if (this.collected.has(i)) return
+      this.bananaDummy.position.set(pos.x, pos.y + Math.sin(t * 3 + i) * 0.08, pos.z)
+      this.bananaDummy.rotation.set(0.25, t * 2 + i, 0.85)
+      this.bananaDummy.scale.setScalar(1.15)
+      this.bananaDummy.updateMatrix()
+      mesh.setMatrixAt(i, this.bananaDummy.matrix)
+      dirty = true
+    })
+    if (dirty) mesh.instanceMatrix.needsUpdate = true
   }
 
   private updateVendorProximity() {

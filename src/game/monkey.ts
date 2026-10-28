@@ -26,9 +26,8 @@ export function createMonkey(): THREE.Group {
 
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.42, 6, 10), fur)
   torso.position.y = 0.95
-  torso.castShadow = true
+  torso.castShadow = true // sole shadow caster in the scene budget
   root.add(torso)
-  // Only torso casts — avoids ~10 shadow draws for one character
 
   const belly = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), skin)
   belly.scale.set(1, 1.1, 0.7)
