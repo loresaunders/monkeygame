@@ -26,7 +26,7 @@ npm run preview
 2. **Arrow keys** (or **WASD**) — move (camera-relative; Left/Right strafe).
 3. **Mouse** — look around.
 4. **Space** — jump (clear short crates/stumps, or bob up while swimming).
-5. Collect **bananas** by walking into them — many sit behind jumpable or skirtable props.
+5. Collect **bananas** by walking into them — short obstacle courses (crates, logs, rocks, gaps) and skirtable props guard many clusters.
 6. Find **Coco’s Supply Stand** (beach shack with potions, coconuts, PB&J, water on the counter).
 7. Press **E** near Coco to open the shop. Buy:
    - **Swimming Ability** — enter water safely

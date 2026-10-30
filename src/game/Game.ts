@@ -83,12 +83,13 @@ export class Game {
       antialias: false, // big win; low-poly scene doesn't need MSAA
       powerPreference: 'high-performance',
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25))
+    // Cap DPR — 1.1 is plenty for this low-poly look and cuts fill cost hard
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.1))
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.BasicShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
+    this.renderer.toneMappingExposure = 1.08
 
     // Software WebGL (SwiftShader/llvmpipe) can't keep up with shadow maps / PBR
     const gl = this.renderer.getContext()
@@ -103,7 +104,7 @@ export class Game {
       this.renderer.toneMapping = THREE.NoToneMapping
       console.info('[perf] Software WebGL detected — low-cost path:', gpu)
     } else {
-      // Real GPU: keep a tiny shadow budget (player only) — foliage never casts
+      // Real GPU: tiny shadow budget (player only) — foliage never casts
       this.renderer.shadowMap.enabled = true
     }
   }
@@ -269,17 +270,23 @@ export class Game {
 
   private update(dt: number, t: number) {
     this.frame++
-    const oceanShader = (this.world.ocean.material as THREE.MeshStandardMaterial).userData?.shader as
+    const oceanShader = (this.world.ocean.material as THREE.Material).userData?.shader as
       | { uniforms: { uTime: { value: number } } }
       | undefined
     if (oceanShader) oceanShader.uniforms.uTime.value = t
 
-    // Fauna: every other frame on GPU, every 3rd on software
-    const faunaEvery = this.softwareGl ? 3 : 2
+    // Fauna / banana bob: throttle CPU uploads (instancing stays)
+    const faunaEvery = this.softwareGl ? 4 : 3
     if (this.frame % faunaEvery === 0) animateFauna(this.world.fauna, t)
-    // Banana bob via instanced mesh if present
-    if (this.world.bananaInstances && this.frame % 2 === 0) {
+    if (this.world.bananaInstances && this.frame % 3 === 0) {
       this.updateBananaInstances(t)
+    }
+    // Tight shadow frustum follows the player — big win vs island-wide map
+    if (!this.softwareGl && this.frame % 4 === 0) {
+      const light = this.world.sunLight
+      light.position.set(this.playerPos.x + 55, 95, this.playerPos.z + 28)
+      light.target.position.set(this.playerPos.x, this.playerPos.y, this.playerPos.z)
+      light.target.updateMatrixWorld()
     }
 
     if (this.toastTimer > 0) {

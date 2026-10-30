@@ -59,55 +59,86 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   const group = new THREE.Group()
   scene.add(group)
 
-  scene.background = new THREE.Color(0x74c7e3)
-  // Lighter fog on the larger island so distant jungle still reads
-  scene.fog = new THREE.FogExp2(0x9ad4e8, software ? 0.008 : 0.0055)
+  // Richer sky: gradient dome + matching fog (cheap MeshBasic)
+  const sky = buildSkyDome()
+  scene.add(sky)
+  scene.background = new THREE.Color(0x6eb8e0)
+  scene.fog = new THREE.FogExp2(0xa8d8ec, software ? 0.0075 : 0.0048)
 
-  const hemi = new THREE.HemisphereLight(0xb1e4ff, 0x7a5a32, 0.85)
+  const hemi = new THREE.HemisphereLight(0xc8eaff, 0x8a6230, 0.92)
   scene.add(hemi)
 
-  const sunLight = new THREE.DirectionalLight(0xfff1c9, 1.55)
+  const sunLight = new THREE.DirectionalLight(0xffe6b0, 1.65)
   sunLight.position.set(90, 110, 40)
   sunLight.castShadow = !software
-  sunLight.shadow.mapSize.set(512, 512)
-  sunLight.shadow.camera.near = 2
-  sunLight.shadow.camera.far = 420
-  const shadowExtent = 200
+  // Small map + tight frustum (updated each few frames to follow player)
+  sunLight.shadow.mapSize.set(256, 256)
+  sunLight.shadow.camera.near = 10
+  sunLight.shadow.camera.far = 220
+  const shadowExtent = 48
   sunLight.shadow.camera.left = -shadowExtent
   sunLight.shadow.camera.right = shadowExtent
   sunLight.shadow.camera.top = shadowExtent
   sunLight.shadow.camera.bottom = -shadowExtent
-  sunLight.shadow.bias = -0.0008
+  sunLight.shadow.bias = -0.0012
+  sunLight.target.position.set(0, 0, -40)
   scene.add(sunLight)
+  scene.add(sunLight.target)
 
+  const fill = new THREE.DirectionalLight(0xa0c8ff, 0.28)
+  fill.position.set(-60, 40, -30)
+  scene.add(fill)
+
+  const sunGroup = new THREE.Group()
   const sun = new THREE.Mesh(
-    new THREE.SphereGeometry(8, 20, 20),
-    new THREE.MeshBasicMaterial({ color: 0xfff0a0 }),
+    new THREE.SphereGeometry(10, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xfff3b0 }),
   )
-  sun.position.set(120, 70, 55)
-  scene.add(sun)
-  scene.add(new THREE.AmbientLight(0xffffff, 0.28))
+  const sunGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(18, 12, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0xffc878,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+    }),
+  )
+  const sunHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(28, 10, 10),
+    new THREE.MeshBasicMaterial({
+      color: 0xff9955,
+      transparent: true,
+      opacity: 0.1,
+      depthWrite: false,
+    }),
+  )
+  sunGroup.add(sunGlow, sunHalo, sun)
+  sunGroup.position.set(140, 85, 60)
+  scene.add(sunGroup)
+  scene.add(new THREE.AmbientLight(0xfff6e8, 0.32))
 
   // Terrain covers main + sister island (centered toward the channel)
-  const seg = software ? 72 : 110
+  const seg = software ? 64 : 88
   const size = 560
   const geo = new THREE.PlaneGeometry(size, size, seg, seg)
   geo.rotateX(-Math.PI / 2)
   geo.translate(SECOND_ISLAND.x * 0.35, 0, 0)
   const pos = geo.attributes.position
   const colors: number[] = []
-  const sand = new THREE.Color(0xedcfa0)
-  const wetSand = new THREE.Color(0xd4b078)
-  const grassA = new THREE.Color(0x6bb84a) // lime
-  const grassB = new THREE.Color(0x3f9a4a) // mid
-  const grassC = new THREE.Color(0x2d7a3c) // deep
-  const grassD = new THREE.Color(0x8fbf4a) // yellow-green
-  const jungle = new THREE.Color(0x247a38)
-  const jungleDeep = new THREE.Color(0x145226)
-  const jungleMoss = new THREE.Color(0x3a8f4a)
-  const rock = new THREE.Color(0x7a7368)
+  // Strong sand ↔ jungle contrast so the island doesn't read as one green field
+  const sand = new THREE.Color(0xf0d4a0)
+  const brightSand = new THREE.Color(0xf7e4bc)
+  const wetSand = new THREE.Color(0xc9a06a)
+  const grassA = new THREE.Color(0x7ec24e)
+  const grassB = new THREE.Color(0x4fa84a)
+  const grassC = new THREE.Color(0x358a3a)
+  const grassD = new THREE.Color(0xa0c85a)
+  const jungle = new THREE.Color(0x1c6b2e)
+  const jungleDeep = new THREE.Color(0x0e3d1c)
+  const jungleMoss = new THREE.Color(0x2f7a3a)
+  const jungleOlive = new THREE.Color(0x4a6b28)
+  const rock = new THREE.Color(0x6f6860)
   const c = new THREE.Color()
-  const tmpC = new THREE.Color()
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i)
@@ -115,21 +146,28 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
     const y = groundHeight(x, z)
     pos.setY(i, y)
     const biome = biomeAt(x, z)
-    const n = (Math.sin(x * 0.11 + z * 0.07) * 0.5 + 0.5) * 0.55 + (Math.sin(x * 0.31 - z * 0.23) * 0.5 + 0.5) * 0.45
+    const n =
+      (Math.sin(x * 0.11 + z * 0.07) * 0.5 + 0.5) * 0.5 +
+      (Math.sin(x * 0.31 - z * 0.23) * 0.5 + 0.5) * 0.35 +
+      (Math.sin(x * 0.55 + z * 0.41) * 0.5 + 0.5) * 0.15
     if (y < WATER_LEVEL + 0.28) c.copy(wetSand)
-    else if (biome === 'sand') c.copy(sand)
-    else if (biome === 'rock') c.copy(rock)
+    else if (biome === 'sand') {
+      c.copy(sand).lerp(brightSand, n)
+      // Warm rim near water
+      if (y < WATER_LEVEL + 0.9) c.lerp(wetSand, 0.35)
+    } else if (biome === 'rock') c.copy(rock).offsetHSL(0, 0, (n - 0.5) * 0.08)
     else if (biome === 'jungle') {
-      c.copy(jungle).lerp(jungleDeep, Math.min(1, (y - 0.6) / 5))
-      c.lerp(jungleMoss, n * 0.45)
+      c.copy(jungle).lerp(jungleDeep, Math.min(1, (y - 0.5) / 4.5))
+      c.lerp(n > 0.55 ? jungleMoss : jungleOlive, 0.25 + n * 0.35)
     } else {
-      // Mixed grass shades — not one flat green field
-      if (n < 0.28) c.copy(grassA)
-      else if (n < 0.55) c.copy(grassB)
-      else if (n < 0.78) c.copy(grassC)
+      if (n < 0.22) c.copy(grassA)
+      else if (n < 0.48) c.copy(grassB)
+      else if (n < 0.72) c.copy(grassC)
       else c.copy(grassD)
-      c.lerp(jungle, 0.15 + n * 0.2)
-      tmpC.copy(c)
+      // Soft blend toward jungle only near the canopy edge
+      const r = Math.hypot(x, z)
+      const edge = Math.max(0, 1 - Math.abs(r - JUNGLE_RADIUS) / 18)
+      c.lerp(jungle, edge * 0.35)
     }
     colors.push(c.r, c.g, c.b)
   }
@@ -144,16 +182,14 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   island.castShadow = false
   group.add(island)
 
-  // Ocean
-  const oceanSeg = software ? 1 : 24
+  // Ocean — Lambert + light GPU waves (avoid MeshStandard fill cost)
+  const oceanSeg = software ? 1 : 14
   const oceanGeo = new THREE.PlaneGeometry(1400, 1400, oceanSeg, oceanSeg)
   oceanGeo.rotateX(-Math.PI / 2)
-  const oceanMat = new THREE.MeshStandardMaterial({
+  const oceanMat = new THREE.MeshLambertMaterial({
     color: 0x1a8fb0,
-    roughness: 0.28,
-    metalness: 0.35,
     transparent: true,
-    opacity: 0.92,
+    opacity: 0.9,
   })
   if (!software) {
     oceanMat.onBeforeCompile = (shader) => {
@@ -162,12 +198,12 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-         transformed.y += sin(position.x * 0.06 + uTime * 1.4) * 0.14
-                        + cos(position.z * 0.05 + uTime * 1.1) * 0.11;`,
+         transformed.y += sin(position.x * 0.055 + uTime * 1.3) * 0.12
+                        + cos(position.z * 0.045 + uTime * 1.05) * 0.09;`,
       )
       oceanMat.userData.shader = shader
     }
-    oceanMat.customProgramCacheKey = () => 'monkey-ocean-waves-v2'
+    oceanMat.customProgramCacheKey = () => 'monkey-ocean-lambert-v1'
   }
   const ocean = new THREE.Mesh(oceanGeo, oceanMat)
   ocean.position.y = WATER_LEVEL
@@ -175,12 +211,12 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   group.add(ocean)
 
   const horizon = new THREE.Mesh(
-    new THREE.RingGeometry(400, 700, 48),
+    new THREE.RingGeometry(380, 720, 32),
     new THREE.MeshBasicMaterial({
-      color: 0x5eb4d2,
+      color: 0x7ec4dc,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.28,
     }),
   )
   horizon.rotation.x = -Math.PI / 2
@@ -192,12 +228,12 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
 
   const colliders: Collider[] = []
 
-  // --- Instanced jungle (5× trees vs prior 140; 180 bushes) ---
-  const palmCount = software ? 200 : 700
-  const bushCount = software ? 90 : 180
-  const rockCount = software ? 18 : 40
+  // Instanced jungle — density kept, cost capped vs prior 700/180
+  const palmCount = software ? 180 : 480
+  const bushCount = software ? 80 : 160
+  const rockCount = software ? 16 : 36
   placeInstancedPalms(group, rand, palmCount, software, colliders)
-  placeInstancedBushes(group, rand, bushCount, colliders)
+  placeInstancedBushes(group, rand, bushCount, software, colliders)
   placeInstancedRocks(group, rand, rockCount, colliders)
 
   // Gate / North Cove
@@ -253,10 +289,13 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
     pushBanana(SECOND_ISLAND.x + Math.cos(a) * r, SECOND_ISLAND.z + Math.sin(a) * r)
   }
 
+  // Dedicated short courses → banana clusters (jump or skirt)
+  placeObstacleCourses(group, bananaPositions, colliders, rand, pushBanana)
+
   // Keep pickups outside existing solids so contact collection is reachable
   for (const b of bananaPositions) clearPointFromColliders(b, colliders, 0.95)
 
-  // Partial rings / crates — go around or jump; never seal bananas in
+  // Light rings on some remaining bananas (never seal)
   placeBananaObstacles(group, bananaPositions, colliders, rand)
 
   const bananaInstances = createBananaInstances(group, bananaPositions)
@@ -291,7 +330,7 @@ function placeInstancedPalms(
   const trunkGeo = new THREE.CylinderGeometry(0.14, 0.28, 1, software ? 5 : 6)
   trunkGeo.translate(0, 0.5, 0)
 
-  // Several canopy silhouettes + greens (separate draws, still tiny vs per-tree meshes)
+  // Several canopy silhouettes + greens (few draws, still instanced)
   const canopyKinds: { geo: THREE.BufferGeometry; mat: THREE.MeshLambertMaterial }[] = [
     {
       geo: buildCanopyGeometry(software, 'spread'),
@@ -307,6 +346,10 @@ function placeInstancedPalms(
     },
     {
       geo: buildCanopyGeometry(software, 'round'),
+      mat: new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }),
+    },
+    {
+      geo: buildCanopyGeometry(software, 'fan'),
       mat: new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }),
     },
   ]
@@ -337,6 +380,10 @@ function placeInstancedPalms(
     new THREE.Color(0x3a8f3a),
     new THREE.Color(0x6bb85a),
     new THREE.Color(0x247a40),
+    new THREE.Color(0x8fc65a), // chartreuse tips
+    new THREE.Color(0x165c28), // deep shade
+    new THREE.Color(0x5a9a38), // olive
+    new THREE.Color(0x3db86a), // teal-green
   ]
 
   const dummy = new THREE.Object3D()
@@ -433,9 +480,37 @@ function placeInstancedPalms(
   })
 }
 
+function buildSkyDome(): THREE.Mesh {
+  const geo = new THREE.SphereGeometry(520, 24, 12)
+  const cols = new Float32Array(geo.attributes.position.count * 3)
+  const zenith = new THREE.Color(0x3a8fd4)
+  const mid = new THREE.Color(0x7ec4e8)
+  const horizon = new THREE.Color(0xf2c9a0)
+  const c = new THREE.Color()
+  for (let i = 0; i < geo.attributes.position.count; i++) {
+    const y = geo.attributes.position.getY(i) / 520
+    const t = Math.min(1, Math.max(0, y * 0.55 + 0.45))
+    if (t < 0.35) c.copy(horizon).lerp(mid, t / 0.35)
+    else c.copy(mid).lerp(zenith, (t - 0.35) / 0.65)
+    cols[i * 3] = c.r
+    cols[i * 3 + 1] = c.g
+    cols[i * 3 + 2] = c.b
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3))
+  const mat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  })
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.frustumCulled = false
+  return mesh
+}
+
 function buildCanopyGeometry(
   software: boolean,
-  style: 'spread' | 'droop' | 'bushy' | 'round',
+  style: 'spread' | 'droop' | 'bushy' | 'round' | 'fan',
 ): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   const segs = software ? 4 : 5
@@ -445,8 +520,22 @@ function buildCanopyGeometry(
       s.translate((i - 1.5) * 0.25, 0.15, ((i * 0.7) % 2) * 0.2 - 0.1)
       parts.push(s)
     }
+  } else if (style === 'fan') {
+    const fronds = software ? 5 : 6
+    for (let i = 0; i < fronds; i++) {
+      const blade = new THREE.ConeGeometry(0.22, 2.4, segs, 1, true)
+      blade.rotateX(Math.PI / 2 + 0.15)
+      blade.translate(0, 0.1, 1.05)
+      const m = new THREE.Matrix4()
+      const q = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(0.25, (i / fronds) * Math.PI * 1.1 - 0.55, 0.1, 'YXZ'),
+      )
+      m.makeRotationFromQuaternion(q)
+      blade.applyMatrix4(m)
+      parts.push(blade)
+    }
   } else {
-    const fronds = style === 'bushy' ? (software ? 5 : 7) : software ? 4 : 5
+    const fronds = style === 'bushy' ? (software ? 5 : 6) : software ? 4 : 5
     const droop = style === 'droop' ? 0.85 : style === 'bushy' ? 0.35 : 0.48
     const len = style === 'bushy' ? 1.35 : style === 'droop' ? 2.2 : 1.85
     const rad = style === 'bushy' ? 0.42 : 0.36
@@ -509,12 +598,42 @@ function placeInstancedBushes(
   group: THREE.Group,
   rand: () => number,
   count: number,
+  software: boolean,
   colliders: Collider[],
 ) {
-  const geo = new THREE.SphereGeometry(0.55, 6, 5)
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff })
-  const mesh = new THREE.InstancedMesh(geo, mat, count)
-  mesh.castShadow = false
+  // Two bush silhouettes so the undergrowth isn't identical spheres
+  const kinds = [
+    {
+      geo: new THREE.SphereGeometry(0.55, software ? 5 : 6, software ? 4 : 5),
+      baseR: 0.55,
+    },
+    {
+      geo: (() => {
+        const a = new THREE.SphereGeometry(0.42, software ? 5 : 6, 4)
+        const b = new THREE.SphereGeometry(0.36, software ? 5 : 6, 4)
+        b.translate(0.28, 0.1, -0.1)
+        const c = new THREE.SphereGeometry(0.3, 5, 4)
+        c.translate(-0.22, 0.05, 0.18)
+        const merged = mergeGeos([a, b, c])
+        a.dispose()
+        b.dispose()
+        c.dispose()
+        return merged
+      })(),
+      baseR: 0.62,
+    },
+  ]
+  const mats = kinds.map(
+    () => new THREE.MeshLambertMaterial({ color: 0xffffff }),
+  )
+  const meshes = kinds.map(
+    (k, i) => new THREE.InstancedMesh(k.geo, mats[i], Math.ceil(count * 0.6)),
+  )
+  for (const m of meshes) {
+    m.castShadow = false
+    m.frustumCulled = true
+  }
+  const counts = meshes.map(() => 0)
   const greens = [
     new THREE.Color(0x2d7a38),
     new THREE.Color(0x3a9144),
@@ -522,6 +641,9 @@ function placeInstancedBushes(
     new THREE.Color(0x55a84a),
     new THREE.Color(0x458a3a),
     new THREE.Color(0x6aad52),
+    new THREE.Color(0x8fbf48),
+    new THREE.Color(0x245c2e),
+    new THREE.Color(0x4a7a28),
   ]
   const dummy = new THREE.Object3D()
   const color = new THREE.Color()
@@ -548,6 +670,8 @@ function placeInstancedBushes(
     if (y < WATER_LEVEL + 0.4) continue
     if (biomeAt(x, z) === 'sand') continue
     if (Math.hypot(x, z + 70) < 5.5) continue
+    const kind = rand() < 0.55 ? 0 : 1
+    if (counts[kind] >= meshes[kind].count) continue
     dummy.position.set(x, y + 0.2 + rand() * 0.35, z)
     dummy.rotation.set(rand() * 0.4, rand() * Math.PI * 2, rand() * 0.3)
     const s = 0.35 + rand() * 1.85
@@ -556,17 +680,20 @@ function placeInstancedBushes(
     const sz = s * (0.85 + rand() * 0.4)
     dummy.scale.set(sx, sy, sz)
     dummy.updateMatrix()
-    mesh.setMatrixAt(placed, dummy.matrix)
+    const ci = counts[kind]
+    meshes[kind].setMatrixAt(ci, dummy.matrix)
     color.copy(greens[Math.floor(rand() * greens.length)])
-    mesh.setColorAt(placed, color)
-    // SphereGeometry radius 0.55 × horizontal scale
-    colliders.push({ x, z, r: 0.55 * Math.max(sx, sz) + 0.35 })
+    meshes[kind].setColorAt(ci, color)
+    counts[kind]++
+    colliders.push({ x, z, r: kinds[kind].baseR * Math.max(sx, sz) + 0.35 })
     placed++
   }
-  mesh.count = placed
-  mesh.instanceMatrix.needsUpdate = true
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-  group.add(mesh)
+  meshes.forEach((mesh, i) => {
+    mesh.count = counts[i]
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    group.add(mesh)
+  })
 }
 
 /** Push a point outside overlapping cylinder colliders (keeps bananas reachable). */
@@ -594,8 +721,200 @@ function clearPointFromColliders(pos: THREE.Vector3, colliders: Collider[], pad:
   }
 }
 
+type ObstacleKit = {
+  crateGeo: THREE.BufferGeometry
+  stumpGeo: THREE.BufferGeometry
+  logGeo: THREE.BufferGeometry
+  rockGeo: THREE.BufferGeometry
+  crateMat: THREE.Material
+  stumpMat: THREE.Material
+  logMat: THREE.Material
+  rockMat: THREE.Material
+}
+
+function makeObstacleKit(): ObstacleKit {
+  const crateGeo = new THREE.BoxGeometry(1.05, 0.9, 1.05)
+  crateGeo.translate(0, 0.45, 0)
+  const stumpGeo = new THREE.CylinderGeometry(0.38, 0.45, 0.75, 6)
+  stumpGeo.translate(0, 0.38, 0)
+  const logGeo = new THREE.CylinderGeometry(0.32, 0.36, 2.2, 6)
+  logGeo.rotateZ(Math.PI / 2)
+  logGeo.translate(0, 0.34, 0)
+  const rockGeo = new THREE.DodecahedronGeometry(0.5, 0)
+  return {
+    crateGeo,
+    stumpGeo,
+    logGeo,
+    rockGeo,
+    crateMat: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
+    stumpMat: new THREE.MeshLambertMaterial({ color: 0x6b4a2e }),
+    logMat: new THREE.MeshLambertMaterial({ color: 0x7a5a38 }),
+    rockMat: new THREE.MeshLambertMaterial({ color: 0x6e675c }),
+  }
+}
+
+function addSolidProp(
+  group: THREE.Group,
+  colliders: Collider[],
+  kit: ObstacleKit,
+  kind: 'crate' | 'stump' | 'log' | 'rock',
+  x: number,
+  z: number,
+  yaw = 0,
+) {
+  const y = groundHeight(x, z)
+  if (y < WATER_LEVEL + 0.25) return false
+  const geo =
+    kind === 'crate' ? kit.crateGeo : kind === 'stump' ? kit.stumpGeo : kind === 'log' ? kit.logGeo : kit.rockGeo
+  const mat =
+    kind === 'crate' ? kit.crateMat : kind === 'stump' ? kit.stumpMat : kind === 'log' ? kit.logMat : kit.rockMat
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.position.set(x, y, z)
+  mesh.rotation.y = yaw
+  mesh.castShadow = false
+  mesh.receiveShadow = false
+  group.add(mesh)
+  const r = kind === 'crate' ? 0.78 : kind === 'log' ? 1.15 : kind === 'rock' ? 0.65 : 0.55
+  colliders.push({ x, z, r })
+  return true
+}
+
 /**
- * Small solid props near many bananas. Always leaves a walk-around gap;
+ * Several short courses: jump crates/logs/rocks or skirt the gaps to reach banana clusters.
+ * Courses are linear-ish with intentional openings — never an unsolvable wall.
+ */
+function placeObstacleCourses(
+  group: THREE.Group,
+  _bananas: THREE.Vector3[],
+  colliders: Collider[],
+  rand: () => number,
+  pushBanana: (x: number, z: number) => void,
+) {
+  const kit = makeObstacleKit()
+
+  type Course = {
+    /** Approach direction (unit-ish). */
+    ax: number
+    az: number
+    /** Start of the course (player approaches toward +ax,+az). */
+    sx: number
+    sz: number
+    steps: number
+    spacing: number
+    pattern: Array<'crate' | 'stump' | 'log' | 'rock' | 'gap'>
+  }
+
+  const courses: Course[] = [
+    // East of spawn — crate hop → cluster
+    {
+      sx: 8,
+      sz: -62,
+      ax: 0.95,
+      az: 0.25,
+      steps: 5,
+      spacing: 2.35,
+      pattern: ['crate', 'gap', 'crate', 'log', 'gap'],
+    },
+    // West toward vendor — rock / stump weave
+    {
+      sx: -10,
+      sz: -58,
+      ax: -0.9,
+      az: 0.35,
+      steps: 6,
+      spacing: 2.2,
+      pattern: ['rock', 'gap', 'stump', 'rock', 'gap', 'crate'],
+    },
+    // Inland south jungle — log lane
+    {
+      sx: 4,
+      sz: -42,
+      ax: 0.15,
+      az: 1,
+      steps: 6,
+      spacing: 2.5,
+      pattern: ['log', 'gap', 'crate', 'log', 'gap', 'stump'],
+    },
+    // Gate approach (south of cove) — mixed
+    {
+      sx: -6,
+      sz: 28,
+      ax: 0.1,
+      az: 1,
+      steps: 5,
+      spacing: 2.4,
+      pattern: ['crate', 'rock', 'gap', 'log', 'gap'],
+    },
+    // NE beach fringe — skirtable rocks
+    {
+      sx: 48,
+      sz: -18,
+      ax: 0.7,
+      az: 0.7,
+      steps: 5,
+      spacing: 2.3,
+      pattern: ['rock', 'gap', 'rock', 'stump', 'gap'],
+    },
+    // Sister island landing reward course (raft players)
+    {
+      sx: SECOND_ISLAND.x - 14,
+      sz: SECOND_ISLAND.z - 4,
+      ax: 1,
+      az: 0.15,
+      steps: 5,
+      spacing: 2.4,
+      pattern: ['crate', 'gap', 'log', 'gap', 'rock'],
+    },
+  ]
+
+  for (const course of courses) {
+    const len = Math.hypot(course.ax, course.az) || 1
+    const ux = course.ax / len
+    const uz = course.az / len
+    const px = -uz // perpendicular for side offsets / gaps
+    const pz = ux
+
+    for (let i = 0; i < course.steps; i++) {
+      const kind = course.pattern[i % course.pattern.length]
+      const x = course.sx + ux * i * course.spacing
+      const z = course.sz + uz * i * course.spacing
+      if (kind === 'gap') continue
+      // Slight side jitter so courses aren't ruler-straight walls
+      const side = (rand() - 0.5) * 0.55
+      addSolidProp(group, colliders, kit, kind, x + px * side, z + pz * side, rand() * Math.PI)
+      // Optional twin piece on the other side with a clear middle gap to walk
+      if (kind === 'crate' || kind === 'rock') {
+        if (rand() < 0.55) {
+          addSolidProp(
+            group,
+            colliders,
+            kit,
+            kind === 'crate' ? 'stump' : 'rock',
+            x + px * (1.55 + rand() * 0.25),
+            z + pz * (1.55 + rand() * 0.25),
+            rand() * Math.PI,
+          )
+        }
+      }
+    }
+
+    // Banana cluster at the end of the course (+ one mid reward)
+    const endX = course.sx + ux * course.steps * course.spacing
+    const endZ = course.sz + uz * course.steps * course.spacing
+    const midX = course.sx + ux * (course.steps * 0.55) * course.spacing
+    const midZ = course.sz + uz * (course.steps * 0.55) * course.spacing
+    pushBanana(midX + px * 0.4, midZ + pz * 0.4)
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2 + rand() * 0.2
+      pushBanana(endX + Math.cos(a) * (1.1 + rand() * 0.7), endZ + Math.sin(a) * (1.1 + rand() * 0.7))
+    }
+    // Open approach marker stump offset — does not block the last gap
+    addSolidProp(group, colliders, kit, 'stump', endX - ux * 1.2 + px * 2.1, endZ - uz * 1.2 + pz * 2.1, 0)
+  }
+}
+
+/**
+ * Light partial rings on some bananas. Always leaves a walk-around gap;
  * crates are short enough to jump (~0.8–1.0m).
  */
 function placeBananaObstacles(
@@ -604,42 +923,23 @@ function placeBananaObstacles(
   colliders: Collider[],
   rand: () => number,
 ) {
-  const crateMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b })
-  const stoneMat = new THREE.MeshLambertMaterial({ color: 0x6e675c })
-  const crateGeo = new THREE.BoxGeometry(1.05, 0.9, 1.05)
-  crateGeo.translate(0, 0.45, 0)
-  const stumpGeo = new THREE.CylinderGeometry(0.38, 0.45, 0.7, 6)
-  stumpGeo.translate(0, 0.35, 0)
-
-  const maxObstacles = Math.min(bananas.length, 120)
+  const kit = makeObstacleKit()
+  const maxObstacles = Math.min(bananas.length, 70)
   let placed = 0
   for (let i = 0; i < bananas.length && placed < maxObstacles; i++) {
-    // Leave the first few spawn bananas wide open so early pickup is obvious
-    if (i < 3) continue
-    if (rand() > 0.62) continue
+    if (i < 4) continue
+    if (rand() > 0.42) continue
 
     const b = bananas[i]
-    const open = rand() * Math.PI * 2 // gap facing this angle — always walkable
-    const pieces = 2 + (rand() < 0.45 ? 1 : 0)
-    const radius = 1.35 + rand() * 0.45
+    const open = rand() * Math.PI * 2
+    const pieces = 2 + (rand() < 0.35 ? 1 : 0)
+    const radius = 1.4 + rand() * 0.4
     for (let k = 0; k < pieces; k++) {
-      // Spread ~0.85 rad each, leaving ≥1.2 rad open
-      const a = open + 1.15 + k * 0.9
+      const a = open + 1.2 + k * 0.95
       const x = b.x + Math.cos(a) * radius
       const z = b.z + Math.sin(a) * radius
-      const y = groundHeight(x, z)
-      if (y < WATER_LEVEL + 0.3) continue
-
-      const useCrate = rand() < 0.55
-      const mesh = new THREE.Mesh(useCrate ? crateGeo : stumpGeo, useCrate ? crateMat : stoneMat)
-      mesh.position.set(x, y, z)
-      mesh.rotation.y = rand() * Math.PI * 2
-      mesh.castShadow = false
-      mesh.receiveShadow = false
-      group.add(mesh)
-      // Jumpable / skirtable — radius matches the prop footprint
-      colliders.push({ x, z, r: useCrate ? 0.75 : 0.55 })
-      placed++
+      const kind = rand() < 0.5 ? 'crate' : rand() < 0.5 ? 'stump' : 'rock'
+      if (addSolidProp(group, colliders, kit, kind, x, z, rand() * Math.PI)) placed++
     }
   }
 }
