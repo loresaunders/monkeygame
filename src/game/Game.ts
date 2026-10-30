@@ -73,7 +73,8 @@ export class Game {
   private readonly lookSmooth = 11
   private readonly maxMouseDelta = 36
   private overdriveUntil = 0
-  private readonly playerRadius = 0.5
+  /** Horizontal capsule radius — must stay outside solid prop colliders. */
+  private readonly playerRadius = 0.55
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -155,6 +156,7 @@ export class Game {
     const start = document.getElementById('start-screen')
     start?.classList.add('hidden')
     start?.setAttribute('aria-hidden', 'true')
+    this.hardEjectIfEmbedded()
     this.requestLock()
     this.toast('Welcome to Monkey Island — find bananas!', true)
   }
@@ -337,6 +339,82 @@ export class Game {
     return this.world.colliders.length
   }
 
+  getBananaCount() {
+    return this.bananas
+  }
+
+  getCollectedBananaCount() {
+    return this.collected.size
+  }
+
+  getBananaPositions() {
+    return this.world.bananaPositions.map((p) => p.clone())
+  }
+
+  /** True when capsule center is inside any solid (for QA). */
+  isEmbeddedInSolid() {
+    const pr = this.playerRadius
+    for (const c of this.world.colliders) {
+      if (Math.hypot(this.playerPos.x - c.x, this.playerPos.z - c.z) < c.r + pr - 0.02) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Walk the capsule into the nearest palm trunk instance and report whether the
+   * center stayed outside the visual trunk radius (live-mesh test, not collider-only).
+   */
+  debugProbeNearestTrunk() {
+    const trunkMeshes: THREE.InstancedMesh[] = []
+    this.world.group.traverse((o) => {
+      const m = o as THREE.InstancedMesh
+      if (m.isInstancedMesh && m.geometry?.type === 'CylinderGeometry') {
+        trunkMeshes.push(m)
+      }
+    })
+    trunkMeshes.sort((a, b) => b.count - a.count)
+    const trunks = trunkMeshes[0]
+    if (!trunks || trunks.count === 0) return { ok: false, reason: 'no trunks' as const }
+
+    const mat = new THREE.Matrix4()
+    const pos = new THREE.Vector3()
+    const quat = new THREE.Quaternion()
+    const scl = new THREE.Vector3()
+    let nearest: { x: number; z: number; visualR: number; d: number } | null = null
+    for (let i = 0; i < trunks.count; i++) {
+      trunks.getMatrixAt(i, mat)
+      mat.decompose(pos, quat, scl)
+      const d = Math.hypot(pos.x - this.playerPos.x, pos.z - this.playerPos.z)
+      const visualR = 0.28 * Math.max(scl.x, scl.z)
+      if (!nearest || d < nearest.d) nearest = { x: pos.x, z: pos.z, visualR, d }
+    }
+    if (!nearest) return { ok: false, reason: 'no nearest' as const }
+
+    // Stand just outside visual trunk, charge into center
+    this.playerPos.x = nearest.x + nearest.visualR + 0.35
+    this.playerPos.z = nearest.z
+    this.playerPos.y = groundHeight(this.playerPos.x, this.playerPos.z)
+    this.yaw = Math.atan2(-(nearest.x - this.playerPos.x), -(nearest.z - this.playerPos.z))
+    this.lookYaw = this.yaw
+    this.hardEjectIfEmbedded()
+    this.debugHoldKey('KeyW', true)
+    this.debugTick(50, 1 / 60)
+    this.debugHoldKey('KeyW', false)
+    const after = this.getPlayerPosition()
+    const dist = Math.hypot(after.x - nearest.x, after.z - nearest.z)
+    const margin = nearest.visualR + 0.2
+    return {
+      ok: dist >= margin && !this.isEmbeddedInSolid(),
+      dist,
+      visualR: nearest.visualR,
+      margin,
+      trunk: nearest,
+      embedded: this.isEmbeddedInSolid(),
+    }
+  }
+
   private applyLookDelta(dx: number, dy: number) {
     const cdx = Math.max(-this.maxMouseDelta, Math.min(this.maxMouseDelta, dx))
     const cdy = Math.max(-this.maxMouseDelta, Math.min(this.maxMouseDelta, dy))
@@ -386,10 +464,11 @@ export class Game {
     const forward = new THREE.Vector3(-Math.sin(this.lookYaw), 0, -Math.cos(this.lookYaw))
     const right = new THREE.Vector3(Math.cos(this.lookYaw), 0, -Math.sin(this.lookYaw))
     const wish = new THREE.Vector3()
-    if (this.input.pressed('KeyW')) wish.add(forward)
-    if (this.input.pressed('KeyS')) wish.sub(forward)
-    if (this.input.pressed('KeyA')) wish.sub(right)
-    if (this.input.pressed('KeyD')) wish.add(right)
+    // Arrows primary; WASD still works
+    if (this.input.pressed('ArrowUp') || this.input.pressed('KeyW')) wish.add(forward)
+    if (this.input.pressed('ArrowDown') || this.input.pressed('KeyS')) wish.sub(forward)
+    if (this.input.pressed('ArrowLeft') || this.input.pressed('KeyA')) wish.sub(right)
+    if (this.input.pressed('ArrowRight') || this.input.pressed('KeyD')) wish.add(right)
     if (wish.lengthSq() > 0) wish.normalize()
 
     const landY = groundHeight(this.playerPos.x, this.playerPos.z)
@@ -485,11 +564,14 @@ export class Game {
 
     const prevX = this.playerPos.x
     const prevZ = this.playerPos.z
-    this.playerPos.x += this.velocity.x * dt
-    this.playerPos.z += this.velocity.z * dt
 
-    // Solid props — trees, bushes, rocks, vendor
+    // Axis-separated move so the capsule slides along trunks instead of embedding
+    this.playerPos.x += this.velocity.x * dt
     this.resolveColliders(prevX, prevZ)
+    const midX = this.playerPos.x
+    const midZ = this.playerPos.z
+    this.playerPos.z += this.velocity.z * dt
+    this.resolveColliders(midX, midZ)
 
     // Sister island: raft required (swim alone cannot finish the crossing)
     if (!hasRaft) {
@@ -530,6 +612,8 @@ export class Game {
       const s = bound / Math.hypot(dx, dz)
       this.playerPos.x = cx + dx * s
       this.playerPos.z = dz * s
+      // Bounds can shove the capsule into props — resolve again
+      this.resolveColliders(prevX, prevZ)
     }
 
     this.player.position.copy(this.playerPos)
@@ -578,40 +662,85 @@ export class Game {
 
   private resolveColliders(prevX: number, prevZ: number) {
     const pr = this.playerRadius
-    // Multi-pass so overlapping trunks don't leave the player inside
-    for (let pass = 0; pass < 3; pass++) {
+    // Multi-pass depenetration; always eject to the circle surface (never stay embedded)
+    for (let pass = 0; pass < 8; pass++) {
       let hit = false
       for (const c of this.world.colliders) {
         const dx = this.playerPos.x - c.x
         const dz = this.playerPos.z - c.z
         const d = Math.hypot(dx, dz)
         const min = c.r + pr
-        if (d < min) {
-          hit = true
-          if (d > 1e-5) {
-            const push = (min - d) / d
-            this.playerPos.x += dx * push
-            this.playerPos.z += dz * push
+        if (d >= min) continue
+        hit = true
+        if (d > 1e-6) {
+          const s = min / d
+          this.playerPos.x = c.x + dx * s
+          this.playerPos.z = c.z + dz * s
+        } else {
+          // Exact center: eject toward where we came from, else +X
+          const ix = prevX - c.x
+          const iz = prevZ - c.z
+          const il = Math.hypot(ix, iz)
+          if (il > 1e-6) {
+            this.playerPos.x = c.x + (ix / il) * min
+            this.playerPos.z = c.z + (iz / il) * min
           } else {
-            this.playerPos.x = prevX
-            this.playerPos.z = prevZ
+            this.playerPos.x = c.x + min
+            this.playerPos.z = c.z
           }
         }
       }
-      if (!hit) break
+      if (!hit) return
+    }
+    // Still jammed between overlapping solids — reject the move
+    this.playerPos.x = prevX
+    this.playerPos.z = prevZ
+    // If prev was already embedded (spawn / teleport), hard-eject from nearest
+    this.hardEjectIfEmbedded()
+  }
+
+  /** Force the capsule outside every collider (used after stuck multipass / teleports). */
+  private hardEjectIfEmbedded() {
+    const pr = this.playerRadius
+    for (let pass = 0; pass < 12; pass++) {
+      let worst: { c: { x: number; z: number; r: number }; depth: number; dx: number; dz: number; d: number } | null =
+        null
+      for (const c of this.world.colliders) {
+        const dx = this.playerPos.x - c.x
+        const dz = this.playerPos.z - c.z
+        const d = Math.hypot(dx, dz)
+        const min = c.r + pr
+        const depth = min - d
+        if (depth > 0 && (!worst || depth > worst.depth)) {
+          worst = { c, depth, dx, dz, d }
+        }
+      }
+      if (!worst) return
+      if (worst.d > 1e-6) {
+        const s = (worst.c.r + pr) / worst.d
+        this.playerPos.x = worst.c.x + worst.dx * s
+        this.playerPos.z = worst.c.z + worst.dz * s
+      } else {
+        this.playerPos.x = worst.c.x + worst.c.r + pr
+        this.playerPos.z = worst.c.z
+      }
     }
   }
 
   private collectBananas() {
     const mesh = this.world.bananaInstances
+    const reach = 1.55
     this.world.bananaPositions.forEach((pos, i) => {
       if (this.collected.has(i)) return
       if (pos.z > GATE_Z && !this.owned.has('unlock')) return
-      if (this.playerPos.distanceTo(pos) < 1.15) {
+      // Horizontal contact — Y bob / slopes must not block pickup
+      const horiz = Math.hypot(this.playerPos.x - pos.x, this.playerPos.z - pos.z)
+      if (horiz < reach && Math.abs(this.playerPos.y - pos.y) < 2.4) {
         this.collected.add(i)
         this.bananas += 1
         if (mesh) {
-          this.bananaDummy.position.copy(pos)
+          // Park instance underground so it cannot reappear if a later write races
+          this.bananaDummy.position.set(pos.x, -20, pos.z)
           this.bananaDummy.scale.setScalar(0)
           this.bananaDummy.updateMatrix()
           mesh.setMatrixAt(i, this.bananaDummy.matrix)

@@ -15,7 +15,19 @@ export class Input {
     this.keys.add(e.code)
     // Gameplay keys — prevent browser chrome from eating them under pointer lock
     if (
-      ['Space', 'KeyE', 'KeyO', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)
+      [
+        'Space',
+        'KeyE',
+        'KeyO',
+        'KeyW',
+        'KeyA',
+        'KeyS',
+        'KeyD',
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+      ].includes(e.code)
     ) {
       e.preventDefault()
     }

@@ -253,6 +253,12 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
     pushBanana(SECOND_ISLAND.x + Math.cos(a) * r, SECOND_ISLAND.z + Math.sin(a) * r)
   }
 
+  // Keep pickups outside existing solids so contact collection is reachable
+  for (const b of bananaPositions) clearPointFromColliders(b, colliders, 0.95)
+
+  // Partial rings / crates — go around or jump; never seal bananas in
+  placeBananaObstacles(group, bananaPositions, colliders, rand)
+
   const bananaInstances = createBananaInstances(group, bananaPositions)
 
   const fauna = new THREE.Group()
@@ -335,9 +341,10 @@ function placeInstancedPalms(
 
   const dummy = new THREE.Object3D()
   const color = new THREE.Color()
+  const placedXZ: { x: number; z: number }[] = []
   let placed = 0
   let attempts = 0
-  while (placed < count && attempts < count * 16) {
+  while (placed < count && attempts < count * 20) {
     attempts++
     // ~18% of trees on the sister island
     const onSister = rand() < 0.18
@@ -363,6 +370,16 @@ function placeInstancedPalms(
     if (y < WATER_LEVEL + 0.45) continue
     if (biomeAt(x, z) === 'sand' && rand() < 0.9) continue
 
+    // Keep trunks from stacking — overlapping solids made the player embed
+    let tooClose = false
+    for (const p of placedXZ) {
+      if (Math.hypot(x - p.x, z - p.z) < 2.15) {
+        tooClose = true
+        break
+      }
+    }
+    if (tooClose) continue
+
     // Varied height, lean, and trunk thickness (not parade of identical poles)
     const h = 3.2 + rand() * 4.6
     const leanX = (rand() - 0.5) * 0.42
@@ -377,8 +394,14 @@ function placeInstancedPalms(
     trunks.setMatrixAt(placed, dummy.matrix)
     color.copy(trunkBrown[Math.floor(rand() * trunkBrown.length)])
     trunks.setColorAt(placed, color)
-    // Solid trunk volume — generous enough that players cannot slip through poles
-    colliders.push({ x, z, r: Math.max(0.75, 0.55 + thick * 0.4) })
+
+    // Collider must cover the leaned trunk at monkey height, not just the base pole.
+    // CylinderGeometry bottom radius is 0.28; scale.x/z = thick.
+    const trunkBaseR = 0.28 * thick
+    const leanMag = Math.hypot(leanX, leanZ)
+    const leanReach = Math.sin(leanMag) * Math.min(h * 0.5, 1.7)
+    colliders.push({ x, z, r: trunkBaseR + leanReach + 0.7 })
+    placedXZ.push({ x, z })
 
     const kind = Math.floor(rand() * canopyMeshes.length)
     const ci = canopyCounts[kind]
@@ -525,18 +548,97 @@ function placeInstancedBushes(
     dummy.position.set(x, y + 0.2 + rand() * 0.35, z)
     dummy.rotation.set(rand() * 0.4, rand() * Math.PI * 2, rand() * 0.3)
     const s = 0.35 + rand() * 1.85
-    dummy.scale.set(s * (0.85 + rand() * 0.4), s * (0.55 + rand() * 0.7), s * (0.85 + rand() * 0.4))
+    const sx = s * (0.85 + rand() * 0.4)
+    const sy = s * (0.55 + rand() * 0.7)
+    const sz = s * (0.85 + rand() * 0.4)
+    dummy.scale.set(sx, sy, sz)
     dummy.updateMatrix()
     mesh.setMatrixAt(placed, dummy.matrix)
     color.copy(greens[Math.floor(rand() * greens.length)])
     mesh.setColorAt(placed, color)
-    colliders.push({ x, z, r: Math.max(0.55, 0.4 + s * 0.45) })
+    // SphereGeometry radius 0.55 × horizontal scale
+    colliders.push({ x, z, r: 0.55 * Math.max(sx, sz) + 0.35 })
     placed++
   }
   mesh.count = placed
   mesh.instanceMatrix.needsUpdate = true
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
   group.add(mesh)
+}
+
+/** Push a point outside overlapping cylinder colliders (keeps bananas reachable). */
+function clearPointFromColliders(pos: THREE.Vector3, colliders: Collider[], pad: number) {
+  for (let pass = 0; pass < 8; pass++) {
+    let hit = false
+    for (const c of colliders) {
+      const dx = pos.x - c.x
+      const dz = pos.z - c.z
+      const d = Math.hypot(dx, dz)
+      const min = c.r + pad
+      if (d >= min) continue
+      hit = true
+      if (d > 1e-6) {
+        const s = min / d
+        pos.x = c.x + dx * s
+        pos.z = c.z + dz * s
+      } else {
+        pos.x = c.x + min
+        pos.z = c.z
+      }
+      pos.y = groundHeight(pos.x, pos.z) + 0.35
+    }
+    if (!hit) return
+  }
+}
+
+/**
+ * Small solid props near many bananas. Always leaves a walk-around gap;
+ * crates are short enough to jump (~0.8–1.0m).
+ */
+function placeBananaObstacles(
+  group: THREE.Group,
+  bananas: THREE.Vector3[],
+  colliders: Collider[],
+  rand: () => number,
+) {
+  const crateMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b })
+  const stoneMat = new THREE.MeshLambertMaterial({ color: 0x6e675c })
+  const crateGeo = new THREE.BoxGeometry(1.05, 0.9, 1.05)
+  crateGeo.translate(0, 0.45, 0)
+  const stumpGeo = new THREE.CylinderGeometry(0.38, 0.45, 0.7, 6)
+  stumpGeo.translate(0, 0.35, 0)
+
+  const maxObstacles = Math.min(bananas.length, 120)
+  let placed = 0
+  for (let i = 0; i < bananas.length && placed < maxObstacles; i++) {
+    // Leave the first few spawn bananas wide open so early pickup is obvious
+    if (i < 3) continue
+    if (rand() > 0.62) continue
+
+    const b = bananas[i]
+    const open = rand() * Math.PI * 2 // gap facing this angle — always walkable
+    const pieces = 2 + (rand() < 0.45 ? 1 : 0)
+    const radius = 1.35 + rand() * 0.45
+    for (let k = 0; k < pieces; k++) {
+      // Spread ~0.85 rad each, leaving ≥1.2 rad open
+      const a = open + 1.15 + k * 0.9
+      const x = b.x + Math.cos(a) * radius
+      const z = b.z + Math.sin(a) * radius
+      const y = groundHeight(x, z)
+      if (y < WATER_LEVEL + 0.3) continue
+
+      const useCrate = rand() < 0.55
+      const mesh = new THREE.Mesh(useCrate ? crateGeo : stumpGeo, useCrate ? crateMat : stoneMat)
+      mesh.position.set(x, y, z)
+      mesh.rotation.y = rand() * Math.PI * 2
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      group.add(mesh)
+      // Jumpable / skirtable — radius matches the prop footprint
+      colliders.push({ x, z, r: useCrate ? 0.75 : 0.55 })
+      placed++
+    }
+  }
 }
 
 function createBananaInstances(group: THREE.Group, positions: THREE.Vector3[]) {
@@ -590,7 +692,8 @@ function placeInstancedRocks(
     dummy.scale.set(sx, 0.5 + rand() * 0.7, sz)
     dummy.updateMatrix()
     mesh.setMatrixAt(placed, dummy.matrix)
-    colliders.push({ x, z, r: 0.35 + Math.max(sx, sz) * 0.35 })
+    // DodecahedronGeometry radius 0.55 × scale
+    colliders.push({ x, z, r: 0.55 * Math.max(sx, sz) + 0.4 })
     placed++
   }
   mesh.count = placed

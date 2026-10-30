@@ -23,10 +23,10 @@ npm run preview
 ## How to play
 
 1. Click **Enter Island**, then click the canvas to capture the mouse.
-2. **WASD** — move (camera-relative strafe).
+2. **Arrow keys** (or **WASD**) — move (camera-relative; Left/Right strafe).
 3. **Mouse** — look around.
-4. **Space** — jump (or bob up while swimming).
-5. Collect **bananas** by walking into them.
+4. **Space** — jump (clear short crates/stumps, or bob up while swimming).
+5. Collect **bananas** by walking into them — many sit behind jumpable or skirtable props.
 6. Find **Coco’s Supply Stand** (beach shack with potions, coconuts, PB&J, water on the counter).
 7. Press **E** near Coco to open the shop. Buy:
    - **Swimming Ability** — enter water safely
@@ -40,9 +40,10 @@ Without swim or raft, deep water respawns you on the beach (unless a Jade Guard 
 
 | Key | Action |
 | --- | --- |
-| W / A / S / D | Forward / left / back / right |
+| ↑ ↓ ← → (or W A S D) | Forward / back / strafe left / strafe right |
 | Space | Jump |
 | E | Open/close shop (near vendor) |
+| O | Overdrive (speed ×2.5 for 5s) |
 | Mouse | Look |
 | Esc | Release mouse |
 
