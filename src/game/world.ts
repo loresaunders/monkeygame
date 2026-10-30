@@ -5,9 +5,16 @@ import {
   GATE_Z,
   ISLAND_RADIUS,
   JUNGLE_RADIUS,
+  SECOND_ISLAND,
   WATER_LEVEL,
   isClearing,
 } from './terrain'
+
+export interface Collider {
+  x: number
+  z: number
+  r: number
+}
 
 function mulberry32(seed: number) {
   return () => {
@@ -36,6 +43,7 @@ export interface WorldParts {
   bananaInstances: THREE.InstancedMesh | null
   trees: THREE.Object3D[]
   sunLight: THREE.DirectionalLight
+  colliders: Collider[]
 }
 
 const PALM_TRUNK_MAT = new THREE.MeshLambertMaterial({ color: 0xffffff })
@@ -63,8 +71,8 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   sunLight.castShadow = !software
   sunLight.shadow.mapSize.set(512, 512)
   sunLight.shadow.camera.near = 2
-  sunLight.shadow.camera.far = 320
-  const shadowExtent = ISLAND_RADIUS * 0.85
+  sunLight.shadow.camera.far = 420
+  const shadowExtent = 200
   sunLight.shadow.camera.left = -shadowExtent
   sunLight.shadow.camera.right = shadowExtent
   sunLight.shadow.camera.top = shadowExtent
@@ -80,11 +88,12 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   scene.add(sun)
   scene.add(new THREE.AmbientLight(0xffffff, 0.28))
 
-  // Island terrain — slightly lower res for fill-rate; vertex colors carry the look
-  const seg = software ? 64 : 96
-  const size = ISLAND_RADIUS * 2.15
+  // Terrain covers main + sister island (centered toward the channel)
+  const seg = software ? 72 : 110
+  const size = 560
   const geo = new THREE.PlaneGeometry(size, size, seg, seg)
   geo.rotateX(-Math.PI / 2)
+  geo.translate(SECOND_ISLAND.x * 0.35, 0, 0)
   const pos = geo.attributes.position
   const colors: number[] = []
   const sand = new THREE.Color(0xedcfa0)
@@ -181,13 +190,15 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   const rand = mulberry32(42)
   const trees: THREE.Object3D[] = []
 
-  // --- Instanced jungle (few draws, high visual variety) ---
-  const palmCount = software ? 40 : 140
-  const bushCount = software ? 70 : 260
-  const rockCount = software ? 14 : 30
-  placeInstancedPalms(group, rand, palmCount, software)
-  placeInstancedBushes(group, rand, bushCount)
-  placeInstancedRocks(group, rand, rockCount)
+  const colliders: Collider[] = []
+
+  // --- Instanced jungle (5× trees vs prior 140; 180 bushes) ---
+  const palmCount = software ? 200 : 700
+  const bushCount = software ? 90 : 180
+  const rockCount = software ? 18 : 40
+  placeInstancedPalms(group, rand, palmCount, software, colliders)
+  placeInstancedBushes(group, rand, bushCount, colliders)
+  placeInstancedRocks(group, rand, rockCount, colliders)
 
   // Gate / North Cove
   const gate = buildGate()
@@ -201,6 +212,8 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
   vendorStand.position.set(vx, groundHeight(vx, vz), vz)
   vendorStand.rotation.y = 0.55
   group.add(vendorStand)
+  colliders.push({ x: vx, z: vz, r: 2.4 })
+  colliders.push({ x: vx + 1.6, z: vz + 0.6, r: 0.6 }) // flag pole
 
   // Bananas
   const bananaPositions: THREE.Vector3[] = []
@@ -233,6 +246,12 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
     const r = 12 + rand() * (ISLAND_RADIUS * 0.78)
     pushBanana(Math.cos(a) * r, Math.sin(a) * r)
   }
+  // Sister island stash (raft voyage reward)
+  for (let i = 0; i < 16; i++) {
+    const a = rand() * Math.PI * 2
+    const r = 6 + rand() * (SECOND_ISLAND.radius * 0.7)
+    pushBanana(SECOND_ISLAND.x + Math.cos(a) * r, SECOND_ISLAND.z + Math.sin(a) * r)
+  }
 
   const bananaInstances = createBananaInstances(group, bananaPositions)
 
@@ -252,6 +271,7 @@ export function createWorld(scene: THREE.Scene, opts: WorldOptions = {}): WorldP
     bananaInstances,
     trees,
     sunLight,
+    colliders,
   }
 }
 
@@ -260,6 +280,7 @@ function placeInstancedPalms(
   rand: () => number,
   count: number,
   software: boolean,
+  colliders: Collider[],
 ) {
   const trunkGeo = new THREE.CylinderGeometry(0.14, 0.28, 1, software ? 5 : 6)
   trunkGeo.translate(0, 0.5, 0)
@@ -289,9 +310,7 @@ function placeInstancedPalms(
   trunks.receiveShadow = false
   trunks.frustumCulled = true
 
-  const canopyMeshes = canopyKinds.map(
-    (k) => new THREE.InstancedMesh(k.geo, k.mat, Math.ceil(count * 0.45)),
-  )
+  const canopyMeshes = canopyKinds.map((k) => new THREE.InstancedMesh(k.geo, k.mat, count))
   for (const m of canopyMeshes) {
     m.castShadow = false
     m.receiveShadow = false
@@ -318,20 +337,31 @@ function placeInstancedPalms(
   const color = new THREE.Color()
   let placed = 0
   let attempts = 0
-  while (placed < count && attempts < count * 14) {
+  while (placed < count && attempts < count * 16) {
     attempts++
-    const a = rand() * Math.PI * 2
-    const preferJungle = rand() < 0.84
-    const rMin = preferJungle ? 10 : JUNGLE_RADIUS
-    const rMax = preferJungle ? JUNGLE_RADIUS : ISLAND_RADIUS * 0.78
-    const r = rMin + rand() * Math.max(2, rMax - rMin)
-    const x = Math.cos(a) * r
-    const z = Math.sin(a) * r
-    if (isClearing(x, z) && preferJungle && rand() < 0.85) continue
-    if (z > GATE_Z - 2 && Math.abs(x) < 10) continue
+    // ~18% of trees on the sister island
+    const onSister = rand() < 0.18
+    let x: number
+    let z: number
+    if (onSister) {
+      const a = rand() * Math.PI * 2
+      const r = 8 + rand() * (SECOND_ISLAND.radius * 0.72)
+      x = SECOND_ISLAND.x + Math.cos(a) * r
+      z = SECOND_ISLAND.z + Math.sin(a) * r
+    } else {
+      const a = rand() * Math.PI * 2
+      const preferJungle = rand() < 0.84
+      const rMin = preferJungle ? 10 : JUNGLE_RADIUS
+      const rMax = preferJungle ? JUNGLE_RADIUS : ISLAND_RADIUS * 0.78
+      const r = rMin + rand() * Math.max(2, rMax - rMin)
+      x = Math.cos(a) * r
+      z = Math.sin(a) * r
+      if (z > GATE_Z - 2 && Math.abs(x) < 10) continue
+    }
+    if (isClearing(x, z) && rand() < 0.82) continue
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.45) continue
-    if (biomeAt(x, z) === 'sand' && preferJungle) continue
+    if (biomeAt(x, z) === 'sand' && rand() < 0.9) continue
 
     // Varied height, lean, and trunk thickness (not parade of identical poles)
     const h = 3.2 + rand() * 4.6
@@ -347,6 +377,7 @@ function placeInstancedPalms(
     trunks.setMatrixAt(placed, dummy.matrix)
     color.copy(trunkBrown[Math.floor(rand() * trunkBrown.length)])
     trunks.setColorAt(placed, color)
+    colliders.push({ x, z, r: 0.35 + thick * 0.28 })
 
     const kind = Math.floor(rand() * canopyMeshes.length)
     const ci = canopyCounts[kind]
@@ -448,7 +479,12 @@ function mergeGeos(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return out
 }
 
-function placeInstancedBushes(group: THREE.Group, rand: () => number, count: number) {
+function placeInstancedBushes(
+  group: THREE.Group,
+  rand: () => number,
+  count: number,
+  colliders: Collider[],
+) {
   const geo = new THREE.SphereGeometry(0.55, 6, 5)
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff })
   const mesh = new THREE.InstancedMesh(geo, mat, count)
@@ -465,25 +501,35 @@ function placeInstancedBushes(group: THREE.Group, rand: () => number, count: num
   const color = new THREE.Color()
   let placed = 0
   let attempts = 0
-  while (placed < count && attempts < count * 12) {
+  while (placed < count && attempts < count * 14) {
     attempts++
-    const a = rand() * Math.PI * 2
-    const r = 8 + rand() * (ISLAND_RADIUS * 0.72)
-    const x = Math.cos(a) * r
-    const z = Math.sin(a) * r
+    const onSister = rand() < 0.2
+    let x: number
+    let z: number
+    if (onSister) {
+      const a = rand() * Math.PI * 2
+      const r = 6 + rand() * (SECOND_ISLAND.radius * 0.7)
+      x = SECOND_ISLAND.x + Math.cos(a) * r
+      z = SECOND_ISLAND.z + Math.sin(a) * r
+    } else {
+      const a = rand() * Math.PI * 2
+      const r = 8 + rand() * (ISLAND_RADIUS * 0.72)
+      x = Math.cos(a) * r
+      z = Math.sin(a) * r
+    }
     if (isClearing(x, z) && rand() < 0.72) continue
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.4) continue
     if (biomeAt(x, z) === 'sand') continue
     dummy.position.set(x, y + 0.2 + rand() * 0.35, z)
     dummy.rotation.set(rand() * 0.4, rand() * Math.PI * 2, rand() * 0.3)
-    // Wide size range: groundcover tufts → big shrub
     const s = 0.35 + rand() * 1.85
     dummy.scale.set(s * (0.85 + rand() * 0.4), s * (0.55 + rand() * 0.7), s * (0.85 + rand() * 0.4))
     dummy.updateMatrix()
     mesh.setMatrixAt(placed, dummy.matrix)
     color.copy(greens[Math.floor(rand() * greens.length)])
     mesh.setColorAt(placed, color)
+    colliders.push({ x, z, r: 0.25 + s * 0.4 })
     placed++
   }
   mesh.count = placed
@@ -509,7 +555,12 @@ function createBananaInstances(group: THREE.Group, positions: THREE.Vector3[]) {
   return mesh
 }
 
-function placeInstancedRocks(group: THREE.Group, rand: () => number, count: number) {
+function placeInstancedRocks(
+  group: THREE.Group,
+  rand: () => number,
+  count: number,
+  colliders: Collider[],
+) {
   const geo = new THREE.DodecahedronGeometry(0.55, 0)
   const mesh = new THREE.InstancedMesh(geo, ROCK_MAT, count)
   mesh.castShadow = false
@@ -517,17 +568,29 @@ function placeInstancedRocks(group: THREE.Group, rand: () => number, count: numb
   const dummy = new THREE.Object3D()
   let placed = 0
   let attempts = 0
-  while (placed < count && attempts < count * 8) {
+  while (placed < count && attempts < count * 10) {
     attempts++
-    const x = (rand() - 0.5) * ISLAND_RADIUS * 1.7
-    const z = (rand() - 0.5) * ISLAND_RADIUS * 1.7
+    const onSister = rand() < 0.25
+    let x: number
+    let z: number
+    if (onSister) {
+      x = SECOND_ISLAND.x + (rand() - 0.5) * SECOND_ISLAND.radius * 1.5
+      z = SECOND_ISLAND.z + (rand() - 0.5) * SECOND_ISLAND.radius * 1.5
+    } else {
+      x = (rand() - 0.5) * ISLAND_RADIUS * 1.7
+      z = (rand() - 0.5) * ISLAND_RADIUS * 1.7
+    }
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.25) continue
+    const sx = 0.8 + rand()
+    const sz = 0.8 + rand() * 0.5
     dummy.position.set(x, y, z)
     dummy.rotation.set(rand(), rand(), rand())
-    dummy.scale.set(0.8 + rand(), 0.5 + rand() * 0.7, 0.8 + rand() * 0.5)
+    dummy.scale.set(sx, 0.5 + rand() * 0.7, sz)
     dummy.updateMatrix()
-    mesh.setMatrixAt(placed++, dummy.matrix)
+    mesh.setMatrixAt(placed, dummy.matrix)
+    colliders.push({ x, z, r: 0.35 + Math.max(sx, sz) * 0.35 })
+    placed++
   }
   mesh.count = placed
   mesh.instanceMatrix.needsUpdate = true

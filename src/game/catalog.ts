@@ -23,7 +23,8 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'raft',
     name: 'Build a Raft',
-    description: 'Craft a driftwood raft. Ride waves and travel the open ocean without drowning.',
+    description:
+      'Craft a driftwood raft. Cross the channel to the sister island and sail without drowning.',
     price: 15,
     kind: 'unlock',
     once: true,

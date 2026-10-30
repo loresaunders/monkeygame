@@ -8,7 +8,15 @@ import {
   createWorld,
   type WorldParts,
 } from './world'
-import { GATE_Z, WATER_LEVEL, groundHeight } from './terrain'
+import {
+  GATE_Z,
+  SECOND_ISLAND,
+  SECOND_ISLAND_RAFT_ONLY_RADIUS,
+  WATER_LEVEL,
+  distToSecondIsland,
+  groundHeight,
+  isOnSecondIsland,
+} from './terrain'
 
 interface Buffs {
   speedUntil: number
@@ -58,11 +66,15 @@ export class Game {
   private animId = 0
   private canvas: HTMLCanvasElement
   private eWasUp = true
+  private oWasUp = true
   private softwareGl = false
   private frame = 0
-  private readonly lookSens = 0.0007
+  /** ~30% above prior 0.0007 damped look. */
+  private readonly lookSens = 0.00091
   private readonly lookSmooth = 16
-  private readonly maxMouseDelta = 24
+  private readonly maxMouseDelta = 28
+  private overdriveUntil = 0
+  private readonly playerRadius = 0.45
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -278,6 +290,7 @@ export class Game {
     }
 
     this.handleShopToggle()
+    this.handleOverdrive(t)
     if (this.shopOpen) {
       this.updateCamera(dt)
       return
@@ -289,6 +302,17 @@ export class Game {
     this.updateVendorProximity()
     this.updateCamera(dt)
     this.updateStatusPills(t)
+  }
+
+  private handleOverdrive(t: number) {
+    if (!this.input.pressed('KeyO')) {
+      this.oWasUp = true
+      return
+    }
+    if (!this.oWasUp || this.shopOpen || !this.started) return
+    this.oWasUp = false
+    this.overdriveUntil = t + 5
+    this.toast('Overdrive! Speed ×2.5 for 5s', true)
   }
 
   private applyLookDelta(dx: number, dy: number) {
@@ -353,6 +377,7 @@ export class Game {
 
     let speed = 8.5
     if (t < this.buffs.speedUntil) speed *= 1.55
+    if (t < this.overdriveUntil) speed *= 2.5
     if (inWater && t < this.buffs.waterBoostUntil) speed *= 1.35
 
     if (inWater) {
@@ -370,6 +395,11 @@ export class Game {
       } else if (canSwim) {
         this.onRaft = false
         if (this.raft) this.raft.visible = false
+        // Swim is fine in the lagoon, but not across to the sister island
+        if (distToSecondIsland(this.playerPos.x, this.playerPos.z) < SECOND_ISLAND_RAFT_ONLY_RADIUS) {
+          this.blockSisterIslandWithoutRaft()
+          return
+        }
         speed *= 0.55
         this.playerPos.y = WATER_LEVEL - 0.05
         this.velocity.y = 0
@@ -385,6 +415,10 @@ export class Game {
       this.drownGrace = 0
       this.onRaft = false
       if (this.raft) this.raft.visible = false
+      if (!hasRaft && isOnSecondIsland(this.playerPos.x, this.playerPos.z)) {
+        this.blockSisterIslandWithoutRaft()
+        return
+      }
     }
 
     // Gate collision (wider opening on the larger island)
@@ -427,8 +461,26 @@ export class Game {
       else this.velocity.y = 0
     }
 
+    const prevX = this.playerPos.x
+    const prevZ = this.playerPos.z
     this.playerPos.x += this.velocity.x * dt
     this.playerPos.z += this.velocity.z * dt
+
+    // Solid props — trees, bushes, rocks, vendor
+    this.resolveColliders(prevX, prevZ)
+
+    // Sister island: raft required (swim alone cannot finish the crossing)
+    if (!hasRaft) {
+      const d2 = distToSecondIsland(this.playerPos.x, this.playerPos.z)
+      if (d2 < SECOND_ISLAND_RAFT_ONLY_RADIUS || isOnSecondIsland(this.playerPos.x, this.playerPos.z)) {
+        this.playerPos.x = prevX
+        this.playerPos.z = prevZ
+        if (this.frame % 45 === 0) {
+          this.toast('Need a raft to reach the sister island — buy one from Coco.')
+        }
+      }
+    }
+
     if (!inWater || (!canSwim && !hasRaft)) {
       this.playerPos.y += this.velocity.y * dt
     } else if (canSwim && this.input.pressed('Space') && !hasRaft) {
@@ -446,12 +498,16 @@ export class Game {
       }
     }
 
-    // Soft world bound (scaled with the larger island)
-    const bound = 320
-    const r = Math.hypot(this.playerPos.x, this.playerPos.z)
+    // Soft world bound covering both islands
+    const bound = 420
+    const r = Math.hypot(this.playerPos.x - 80, this.playerPos.z)
     if (r > bound) {
-      this.playerPos.x *= bound / r
-      this.playerPos.z *= bound / r
+      const cx = 80
+      const dx = this.playerPos.x - cx
+      const dz = this.playerPos.z
+      const s = bound / Math.hypot(dx, dz)
+      this.playerPos.x = cx + dx * s
+      this.playerPos.z = dz * s
     }
 
     this.player.position.copy(this.playerPos)
@@ -485,6 +541,35 @@ export class Game {
     if (this.raft) return
     this.raft = createRaft()
     this.scene.add(this.raft)
+  }
+
+  private blockSisterIslandWithoutRaft() {
+    const dx = this.playerPos.x - SECOND_ISLAND.x
+    const dz = this.playerPos.z - SECOND_ISLAND.z
+    const len = Math.hypot(dx, dz) || 1
+    const push = SECOND_ISLAND_RAFT_ONLY_RADIUS + 2
+    this.playerPos.x = SECOND_ISLAND.x + (dx / len) * push
+    this.playerPos.z = SECOND_ISLAND.z + (dz / len) * push
+    this.velocity.set(0, 0, 0)
+    this.toast('Need a raft to reach the sister island — buy one from Coco.')
+  }
+
+  private resolveColliders(prevX: number, prevZ: number) {
+    const pr = this.playerRadius
+    for (const c of this.world.colliders) {
+      const dx = this.playerPos.x - c.x
+      const dz = this.playerPos.z - c.z
+      const d = Math.hypot(dx, dz)
+      const min = c.r + pr
+      if (d < min && d > 1e-5) {
+        const push = (min - d) / d
+        this.playerPos.x += dx * push
+        this.playerPos.z += dz * push
+      } else if (d <= 1e-5) {
+        this.playerPos.x = prevX
+        this.playerPos.z = prevZ
+      }
+    }
   }
 
   private collectBananas() {
@@ -573,6 +658,10 @@ export class Game {
     if (t < this.buffs.jumpUntil) pills.push('Leap')
     if (t < this.buffs.guardUntil) pills.push('Guard')
     if (t < this.buffs.waterBoostUntil) pills.push('Hydrated')
+    if (t < this.overdriveUntil) {
+      const left = Math.max(0, this.overdriveUntil - t)
+      pills.push(`Overdrive ${left.toFixed(1)}s`)
+    }
     if (this.onRaft) pills.push('Afloat')
     host.innerHTML = pills.map((p) => `<span>${p}</span>`).join('')
   }
