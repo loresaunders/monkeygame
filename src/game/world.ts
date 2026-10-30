@@ -369,6 +369,8 @@ function placeInstancedPalms(
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.45) continue
     if (biomeAt(x, z) === 'sand' && rand() < 0.9) continue
+    // Keep the south spawn pad clear so the monkey doesn't start inside a trunk
+    if (Math.hypot(x - 0, z - (-70)) < 5.5) continue
 
     // Keep trunks from stacking — overlapping solids made the player embed
     let tooClose = false
@@ -545,6 +547,7 @@ function placeInstancedBushes(
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.4) continue
     if (biomeAt(x, z) === 'sand') continue
+    if (Math.hypot(x, z + 70) < 5.5) continue
     dummy.position.set(x, y + 0.2 + rand() * 0.35, z)
     dummy.rotation.set(rand() * 0.4, rand() * Math.PI * 2, rand() * 0.3)
     const s = 0.35 + rand() * 1.85
@@ -685,6 +688,7 @@ function placeInstancedRocks(
     }
     const y = groundHeight(x, z)
     if (y < WATER_LEVEL + 0.25) continue
+    if (Math.hypot(x, z + 70) < 5.5) continue
     const sx = 0.8 + rand()
     const sz = 0.8 + rand() * 0.5
     dummy.position.set(x, y, z)
