@@ -295,8 +295,9 @@ export class Game {
     }
 
     if (!this.started) {
-      this.camera.position.set(-48, 22, -95)
-      this.camera.lookAt(0, 3, -20)
+      // Wide establishing shot — sky dome + beach/jungle contrast readable behind the start card
+      this.camera.position.set(-36, 28, -108)
+      this.camera.lookAt(12, 6, -20)
       return
     }
 

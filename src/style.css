@@ -295,10 +295,10 @@ body,
   z-index: 30;
   display: grid;
   place-items: center;
+  /* Let the live 3D sky / island show through — no opaque teal wash */
   background:
-    radial-gradient(ellipse at 30% 20%, rgba(245, 197, 24, 0.22), transparent 45%),
-    radial-gradient(ellipse at 70% 80%, rgba(26, 143, 159, 0.35), transparent 50%),
-    linear-gradient(180deg, #1d6f7c, #0a2c34 55%, #061820);
+    radial-gradient(ellipse at 50% 110%, rgba(6, 24, 32, 0.55), transparent 55%),
+    linear-gradient(180deg, rgba(8, 28, 40, 0.28), rgba(6, 24, 32, 0.12) 40%, rgba(6, 24, 32, 0.45));
   pointer-events: auto;
 }
 
@@ -306,10 +306,11 @@ body,
   width: min(560px, calc(100vw - 2rem));
   padding: 2rem 1.75rem;
   border-radius: 22px;
-  background: rgba(8, 30, 36, 0.78);
+  background: rgba(8, 30, 36, 0.82);
   border: 1px solid rgba(255, 248, 232, 0.18);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
   text-align: left;
+  backdrop-filter: blur(6px);
 }
 
 .brand {
