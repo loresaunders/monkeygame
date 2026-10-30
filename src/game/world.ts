@@ -377,7 +377,8 @@ function placeInstancedPalms(
     trunks.setMatrixAt(placed, dummy.matrix)
     color.copy(trunkBrown[Math.floor(rand() * trunkBrown.length)])
     trunks.setColorAt(placed, color)
-    colliders.push({ x, z, r: 0.35 + thick * 0.28 })
+    // Solid trunk volume — generous enough that players cannot slip through poles
+    colliders.push({ x, z, r: Math.max(0.75, 0.55 + thick * 0.4) })
 
     const kind = Math.floor(rand() * canopyMeshes.length)
     const ci = canopyCounts[kind]
@@ -529,7 +530,7 @@ function placeInstancedBushes(
     mesh.setMatrixAt(placed, dummy.matrix)
     color.copy(greens[Math.floor(rand() * greens.length)])
     mesh.setColorAt(placed, color)
-    colliders.push({ x, z, r: 0.25 + s * 0.4 })
+    colliders.push({ x, z, r: Math.max(0.55, 0.4 + s * 0.45) })
     placed++
   }
   mesh.count = placed

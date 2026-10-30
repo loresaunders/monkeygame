@@ -66,15 +66,14 @@ export class Game {
   private animId = 0
   private canvas: HTMLCanvasElement
   private eWasUp = true
-  private oWasUp = true
   private softwareGl = false
   private frame = 0
-  /** ~30% above prior 0.0007 damped look. */
-  private readonly lookSens = 0.00091
-  private readonly lookSmooth = 16
-  private readonly maxMouseDelta = 28
+  /** ~2× prior 0.00091 — still clamped + smoothed to avoid shake. */
+  private readonly lookSens = 0.00185
+  private readonly lookSmooth = 11
+  private readonly maxMouseDelta = 36
   private overdriveUntil = 0
-  private readonly playerRadius = 0.45
+  private readonly playerRadius = 0.5
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -130,6 +129,9 @@ export class Game {
     this.player.position.copy(this.playerPos)
 
     this.input.attach()
+    this.input.onActionKey = (code) => {
+      if (code === 'KeyO') this.activateOverdrive()
+    }
     this.input.onPointerUnlock = () => {
       // Do not clear WASD. Prompt once; next pointerdown re-locks.
       if (this.started && !this.shopOpen) {
@@ -290,7 +292,6 @@ export class Game {
     }
 
     this.handleShopToggle()
-    this.handleOverdrive(t)
     if (this.shopOpen) {
       this.updateCamera(dt)
       return
@@ -304,15 +305,36 @@ export class Game {
     this.updateStatusPills(t)
   }
 
-  private handleOverdrive(t: number) {
-    if (!this.input.pressed('KeyO')) {
-      this.oWasUp = true
-      return
-    }
-    if (!this.oWasUp || this.shopOpen || !this.started) return
-    this.oWasUp = false
+  /** Activate O overdrive from a real keydown (not polled edge-detect). */
+  activateOverdrive() {
+    // Shop / pointer-lock must not swallow O — only require play has started.
+    if (!this.started) return
+    const t = this.clock.elapsedTime
+    // Refresh / stack to full 5s from now
     this.overdriveUntil = t + 5
     this.toast('Overdrive! Speed ×2.5 for 5s', true)
+  }
+
+  getOverdriveRemaining() {
+    return Math.max(0, this.overdriveUntil - this.clock.elapsedTime)
+  }
+
+  getLookSensitivity() {
+    return this.lookSens
+  }
+
+  /** Nearest solid collider (for QA). */
+  getNearestCollider() {
+    let best: { x: number; z: number; r: number; dist: number } | null = null
+    for (const c of this.world.colliders) {
+      const dist = Math.hypot(this.playerPos.x - c.x, this.playerPos.z - c.z)
+      if (!best || dist < best.dist) best = { x: c.x, z: c.z, r: c.r, dist }
+    }
+    return best
+  }
+
+  getColliderCount() {
+    return this.world.colliders.length
   }
 
   private applyLookDelta(dx: number, dy: number) {
@@ -556,19 +578,27 @@ export class Game {
 
   private resolveColliders(prevX: number, prevZ: number) {
     const pr = this.playerRadius
-    for (const c of this.world.colliders) {
-      const dx = this.playerPos.x - c.x
-      const dz = this.playerPos.z - c.z
-      const d = Math.hypot(dx, dz)
-      const min = c.r + pr
-      if (d < min && d > 1e-5) {
-        const push = (min - d) / d
-        this.playerPos.x += dx * push
-        this.playerPos.z += dz * push
-      } else if (d <= 1e-5) {
-        this.playerPos.x = prevX
-        this.playerPos.z = prevZ
+    // Multi-pass so overlapping trunks don't leave the player inside
+    for (let pass = 0; pass < 3; pass++) {
+      let hit = false
+      for (const c of this.world.colliders) {
+        const dx = this.playerPos.x - c.x
+        const dz = this.playerPos.z - c.z
+        const d = Math.hypot(dx, dz)
+        const min = c.r + pr
+        if (d < min) {
+          hit = true
+          if (d > 1e-5) {
+            const push = (min - d) / d
+            this.playerPos.x += dx * push
+            this.playerPos.z += dz * push
+          } else {
+            this.playerPos.x = prevX
+            this.playerPos.z = prevZ
+          }
+        }
       }
+      if (!hit) break
     }
   }
 

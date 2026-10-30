@@ -7,15 +7,19 @@ export class Input {
   /** Fires once when pointer lock is lost after having been locked. */
   onPointerUnlock: (() => void) | null = null
 
+  /** Optional one-shot handlers (e.g. overdrive) — fired before Set updates. */
+  onActionKey: ((code: string) => void) | null = null
+
   private readonly onKeyDown = (e: KeyboardEvent) => {
     if (e.repeat) return
     this.keys.add(e.code)
-    if (e.code === 'Space' || e.code === 'KeyE' || e.code.startsWith('Key')) {
-      // Keep WASD/Space from scrolling / activating chrome UI while playing
-      if (['Space', 'KeyE', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
-        e.preventDefault()
-      }
+    // Gameplay keys — prevent browser chrome from eating them under pointer lock
+    if (
+      ['Space', 'KeyE', 'KeyO', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)
+    ) {
+      e.preventDefault()
     }
+    if (e.code === 'KeyO') this.onActionKey?.(e.code)
   }
 
   private readonly onKeyUp = (e: KeyboardEvent) => {
